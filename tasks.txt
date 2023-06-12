@@ -1,0 +1,6 @@
+Task { thing: My new task, status: Todo, deadline: Deadline { date: 2023-06-12T12:30:00+02:00 } }
+Task { thing: Thign, status: Todo, deadline: Deadline { date: 2023-06-13T12:30:00+02:00 } }
+Task { thing: My task, status: Todo, deadline: Deadline { date: 2023-06-13T15:30:00+02:00 } }
+Task { thing: 10/05/2023 22:30, status: Todo, deadline: Deadline { date: 2023-05-10T22:50:00+02:00 } }
+Task { thing: My way to the highway, status: Todo, deadline: Deadline { date: 2023-10-10T22:22:00+02:00 } }
+Task { thing: asdas, status: Todo, deadline: Deadline { date: 2023-06-13T12:30:00+02:00 } }
