@@ -1,0 +1,24 @@
+Task { thing: asdasd, status: Todo, deadline: Deadline { date: 2023-06-13T12:30:00+02:00 }, id: q_YH0uIWlZPzKj1hJRX6U, label: Task 1 }
+// let last_id = 1
+
+Task { thing: asdasd, status: Todo, deadline: Deadline { date: 2023-06-13T12:30:00+02:00 }, id: q_YH0uIWlZPzKj1hJRX6U, label: Task 2 }
+// let last_id = 2
+
+
+Task { thing: asdasd, status: Todo, deadline: Deadline { date: 2023-06-13T12:30:00+02:00 }, id: q_YH0uIWlZPzKj1hJRX6U, label: Task 4 }
+// let last_id = 4
+
+Task { thing: asdasd, status: Todo, deadline: Deadline { date: 2023-06-13T12:30:00+02:00 }, id: q_YH0uIWlZPzKj1hJRX6U, label: Task 5 }
+// let last_id = task.id
+
+
+
+Task 1
+Task 3
+Task 4
+ 
+[1, 3, 5]
+
+[]
+tasks.len() + 1
+let last_id = task.id.clone();
