@@ -1,3 +1,0 @@
-Task { thing: "tomatoes, sos: asdasd ,, ::", status: Todo, label: Task 1, deadline: Deadline { date: 2023-06-16T12:30:00+02:00 } }
-Task { thing: "#@#@&*#(*asdasd.a/sd/asd/ .as/d.a/s. a.sd/.123", status: Todo, label: Task 2, deadline: Deadline { date: 2023-06-16T12:30:00+02:00 } }
-Task { thing: "asd,as,d as,das, s.d,a.s,a. ,ds ;S S: D:SD:S:DS<,;,;,;,::: sadasd", status: Todo, label: Task 3, deadline: Deadline { date: 2023-06-16T12:30:00+02:00 } }

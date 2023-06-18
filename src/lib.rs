@@ -7,6 +7,7 @@ use core::panic;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
+use std::fs;
 use std::fs::OpenOptions;
 use std::io::{self, BufRead, BufReader, Write};
 use std::time::SystemTime;
@@ -55,12 +56,12 @@ impl Task {
                 break;
             }
 
-            let mut val = Task::get_all_ids(&tasks);
+            let mut all_ids = Task::get_all_ids(&tasks);
 
-            let av_ids = Task::find_available_ids(&mut val);
+            let available_ids = Task::find_available_ids(&mut all_ids);
 
-            let label = if !av_ids.is_empty() {
-                format!("Task {}", av_ids.first().unwrap())
+            let label = if !available_ids.is_empty() {
+                format!("Task {}", available_ids.first().unwrap())
             } else {
                 format!("Task {}", tasks.len() + 1)
             };
@@ -87,8 +88,13 @@ impl Task {
         }
     }
 
-    fn edit_task(tasks: &mut Vec<Task>, task_label_number: String) -> Result<(), String> {
+    fn edit_task(
+        tasks: &mut Vec<Task>,
+        task_label_number: String,
+        switch_field: &Option<String>,
+    ) -> Result<(), String> {
         let task_labeled_by = format!("Task {task_label_number}");
+        let mut is_switch_invalid = false;
 
         if let Some(task) = tasks.into_iter().find(|x| x.label == task_labeled_by) {
             match task.status {
@@ -99,29 +105,42 @@ impl Task {
                     return Err("Cannot edit task with previous status as Expired".to_string());
                 }
                 _ => loop {
-                    let field_to_edit = cli_manager::get_labeled_input_from_user("field")
-                        .to_lowercase()
-                        .to_string();
+                    let mut field_to_edit: String = String::new();
+
+                    if !is_switch_invalid {
+                        if let Some(switch) = switch_field {
+                            let switch = switch.trim_start_matches("--").to_string();
+                            match switch.as_str() {
+                                "thing" | "status" => field_to_edit = switch,
+                                _ => {
+                                    eprintln!("No such field to edit, you lying son of a bitch!");
+                                    is_switch_invalid = true;
+                                }
+                            }
+                        };
+                    }
+
+                    if field_to_edit.is_empty() {
+                        field_to_edit = cli_manager::get_labeled_input_from_user("field")
+                            .to_lowercase()
+                            .to_string()
+                    }
 
                     if field_to_edit == "thing" {
                         EditTaskConfig::edit_thing(task)
                     } else if field_to_edit == "status" {
                         EditTaskConfig::edit_status(task)
-                    }
-                    // else if field_to_edit == "deadline" {
-                    //     Ok(EditTaskConfig::edit_deadline(task))
-                    // }
-                    else {
+                    } else if field_to_edit == "exit" {
+                        cli_manager::clear_console_and_display_help();
+                        break;
+                    } else {
                         eprintln!("No such field to edit, you lying son of a bitch!");
                         continue;
+                        // break;
                     }
 
-                    cli_manager::clear_console();
-
-                    println!("Updated task:\n{task}");
-
                     if let Err(err) = tasks_file_manager::save_tasks(&tasks) {
-                        eprint!("{err}");
+                        eprintln!("{err}");
                     };
 
                     break;
@@ -133,6 +152,29 @@ impl Task {
         Ok(())
     }
 
+    fn delete_task(tasks: &mut Vec<Task>, task_label_number: String) -> Result<(), String> {
+        match task_label_number.as_str() {
+            "all" => {
+                tasks.clear();
+                println!("Successfully deleted all tasks");
+            }
+            task_number => {
+                let task_labeled_by = format!("Task {task_number}");
+                if tasks.iter().any(|x| x.label == task_labeled_by) {
+                    tasks.retain(|x| *x.label != task_labeled_by);
+                } else {
+                    eprintln!("Task with label {task_labeled_by} does not exists");
+                }
+            }
+        };
+
+        if let Err(err) = tasks_file_manager::save_tasks(&tasks) {
+            eprintln!("{err}");
+        }
+
+        Ok(())
+    }
+
     fn find_available_ids(ids: &mut Vec<i32>) -> Vec<i32> {
         if ids.len() == 0 {
             return vec![];
@@ -141,21 +183,33 @@ impl Task {
 
         ids.sort();
 
+        // 1, 2, 3 4,5
+        //
+
         let mut i = 0;
         while i < ids.len() - 1 {
             let first = ids[i];
             let second = ids[i + 1];
             let diff = second - first;
-
+            println!("{diff}");
             if diff > 1 {
                 let slice_of_ids: Vec<i32> = (first + 1..second).collect();
-                println!("{:?}", slice_of_ids);
                 available_ids.extend_from_slice(&slice_of_ids);
                 i += (diff - 1) as usize;
             }
 
             i += 1;
         }
+
+        // pad all ids from the 1 to smallest present id
+        if ids.len() >= 1 {
+            for id in 1..ids.first().unwrap().to_owned() {
+                available_ids.push(id);
+            }
+        }
+
+        println!("ids: {ids:?}\n vai: {available_ids:?}");
+
         available_ids
     }
 
@@ -291,7 +345,31 @@ impl Deadline {
     }
 }
 
+// Or the switches in the near future and maybe
+fn handle_action_by_argument(tasks: &Vec<Task>, switch: String) -> Result<(), String> {
+    // && switch.chars().all(|c| c.is_alphanumeric())
+    if switch.starts_with("--") {
+        let switch = switch.trim_start_matches("--").to_string();
+
+        match switch.as_str() {
+            "1" | "show-tasks" => Ok(cli_manager::show_tasks(tasks)),
+            _ => Err("swtich does not exists".to_string()),
+        }
+    } else {
+        return Err("Switch has a wrong format or does not exists".to_string());
+    }?;
+
+    Ok(())
+}
+
 pub fn spawn_cli_interface(tasks: &mut Vec<Task>) -> Result<(), String> {
+    let args = std::env::args().collect::<Vec<String>>();
+
+    if args.len() > 1 {
+        let switch = &args[1..].join("").to_string();
+        return handle_action_by_argument(tasks, switch.to_owned());
+    }
+
     cli_manager::show_user_actions();
 
     loop {
@@ -312,17 +390,54 @@ pub fn spawn_cli_interface(tasks: &mut Vec<Task>) -> Result<(), String> {
                     || action.starts_with("edit task ")
                     || action.starts_with("edit ") =>
             {
-                let task_number = action
+                let user_input = action
                     .trim_start_matches("3 ")
                     .trim_start_matches("edit task ")
                     .trim_start_matches("edit ")
                     .trim()
                     .to_string();
 
+                let splited = user_input.split(" ").collect::<Vec<&str>>();
+
+                let (task_number, switch_field) = if splited.len() == 1 {
+                    (user_input, None)
+                } else if splited.len() == 2 && splited[1].starts_with("--") {
+                    (splited[0].to_string(), Some(splited[1].to_string()))
+                } else {
+                    (String::new(), None)
+                };
+
                 if task_number.chars().all(|c| c.is_numeric()) {
-                    if let Err(err) = Task::edit_task(tasks, task_number) {
+                    if let Err(err) = Task::edit_task(tasks, task_number, &switch_field) {
                         eprintln!("{err}");
                     }
+                } else {
+                    eprintln!("Invalid task number")
+                }
+            }
+            action
+                if action.starts_with("4 ")
+                    | action.starts_with("delete task ")
+                    | action.starts_with("delete ") =>
+            {
+                // task_number =| numeric_string | "all"
+                let mut task_number = action
+                    .trim_start_matches("4 ")
+                    .trim_start_matches("delete task ")
+                    .trim_start_matches("delete ")
+                    .trim()
+                    .to_string();
+                task_number =
+                    match task_number.chars().all(|c| c.is_numeric()) || task_number == "all" {
+                        true => task_number,
+                        false => {
+                            eprintln!("Invalid task number");
+                            continue;
+                        }
+                    };
+
+                if let Err(err) = Task::delete_task(tasks, task_number) {
+                    eprintln!("{err}");
                 }
             }
             "exit" => std::process::exit(0),
@@ -337,20 +452,30 @@ struct EditTaskConfig;
 impl EditTaskConfig {
     fn edit_thing(task: &mut Task) {
         let new_value = cli_manager::get_labeled_input_from_user("thing");
+        if new_value == "exit" {
+            cli_manager::clear_console_and_display_help();
+            return ();
+        }
+
         task.thing = format!("\"{}\"", new_value);
+
+        cli_manager::clear_console();
+
+        println!("Updated task:\n{task}");
     }
 
     fn edit_status(task: &mut Task) {
         // print available enums help message
         let help_message = || {
             cli_manager::clear_console();
+
             println!(
                 "Available options: {}",
                 r#"
 TaskStatus {
     Completed,
     Todo,
-    Postponed(Date -> format: d/m/Y H:M),
+    Postponed(Date(relative to the previous date) -> format: 10/06/2023 12:30 | 10/06/2023 | tomorrow 12:30 | today 12:30 | tomorrow | 06/06/2023 | 12:30),
     Aborted
 }
 help => spawn this message"#
@@ -368,6 +493,9 @@ help => spawn this message"#
             if new_value == "help" {
                 help_message();
                 continue;
+            } else if new_value == "exit" {
+                cli_manager::clear_console_and_display_help();
+                break;
             }
 
             let new_status = match new_value.as_str() {
@@ -402,6 +530,10 @@ help => spawn this message"#
                 }
             };
             task.status = new_status;
+
+            cli_manager::clear_console();
+
+            println!("Updated task:\n{task}");
 
             break;
         }
@@ -573,10 +705,11 @@ pub mod cli_manager {
 
     pub fn show_user_actions() {
         println!(
-            "Available actions:\n{}{}{}{}{}",
-            "1 | show tasks => Display all tasks (including expired, completed, postponed)\n",
-            "2 | add task | add => Add new task (thing, deadline)\n",
-            "3 | edit task | edit => Edit task (takes Task id)\n",
+            "Available actions:\n{}{}{}{}{}{}",
+            "1 | show tasks => Display all tasks\n",
+            "2 | add task | add => Add new task (thing, deadline) \n",
+            "3 | edit task | edit => Edit task <Task id> [--field] \n",
+            "4 | delete task | delete | delete all => Detete Task <Task id | all>\n",
             "help => Display this help message\n",
             "exit => Terminates current procces\n",
         )
@@ -603,41 +736,77 @@ pub mod cli_manager {
 
 pub mod tasks_file_manager {
     use super::*;
+    use std::env;
+    use std::path::PathBuf;
+    pub fn get_tasks_file_path() -> Result<PathBuf, Box<dyn Error>> {
+        let dir_path = match std::env::var("SystemDrive") {
+            Ok(system_drive_letter) => {
+                let username = whoami::username();
+                let path = format!(
+                    "{}/Users/{}/documents/rust-todo/",
+                    system_drive_letter, username
+                );
+                PathBuf::from(path)
+            }
+            Err(err) => {
+                eprintln!("Error while reading SystemDrive env var with error: {err}");
+
+                let working_dir = env::current_dir()?;
+
+                println!(
+                    "Using current directory as the storage for tasks: {}",
+                    working_dir.display()
+                );
+
+                working_dir
+            }
+        };
+
+        if dir_path.try_exists().is_ok() {
+            fs::create_dir_all(&dir_path)?;
+        }
+
+        let file_path = PathBuf::from(format!("{}tasks.txt", dir_path.display()));
+
+        // println!("Using as file: {}", file_path.display());
+        Ok(file_path)
+    }
 
     pub fn save_tasks(tasks: &Vec<Task>) -> Result<(), Box<dyn Error>> {
-        let file = OpenOptions::new()
+        let file_path = get_tasks_file_path()?;
+
+        let mut file = OpenOptions::new()
             .write(true)
+            .truncate(true)
             .create(true)
-            .open("./tasks.txt");
+            .open(file_path)?;
 
-        let mut content = String::new();
-
-        tasks.iter().for_each(|task| {
-            let task_str = format!(
-                "Task {{ thing: {}, status: {:?}, label: {}, deadline: {:?} }}",
-                task.thing, task.status, task.label, task.deadline
-            );
-            // Task { thing: "thing", status: Todo, deadline: Deadline { date: 2023-06-13T12:30:00+02:00 }" }
-
-            content.push_str(&task_str);
-            content.push_str("\n");
-        });
-
-        match file {
-            Ok(mut file) => Ok(file.write_all(content.as_bytes())?),
-            Err(err) => self::panic!("{}", err),
+        if tasks.is_empty() {
+            file.set_len(0)?;
+            return Ok(());
         }
+
+        for task in tasks {
+            file.write_fmt(format_args!(
+                "Task {{ thing: {}, status: {:?}, label: {}, deadline: {:?} }}\n",
+                task.thing, task.status, task.label, task.deadline
+            ))?;
+            file.flush().expect("Failed to flush buffer");
+        }
+
+        Ok(())
     }
 
     pub fn get_saved_tasks() -> Result<Vec<Task>, Box<dyn Error>> {
-        let file = OpenOptions::new().read(true).open("./tasks.txt")?;
+        let file_path = get_tasks_file_path()?;
+
+        let file = OpenOptions::new().read(true).open(file_path)?;
 
         let reader = BufReader::new(file);
 
         let instaces: Vec<Task> = reader
             .lines()
             .map(|line| {
-                // println!("{line:?}");
                 let line = line.unwrap();
                 let parsed = line.split("Task { ");
                 let parsed = parsed.filter(|x| x.len() > 0);
