@@ -11,7 +11,9 @@ use rutodo::tasks_file_manager;
 use tasks_file_manager::parse_task_from_file;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("Welcome in this another useless todoapp that everybody makes and no one uses!");
+    if std::env::args().collect::<Vec<_>>()[1..].is_empty() {
+        println!("Welcome in this another useless todoapp that everybody makes and no one uses!");
+    };
     let mut tasks: Vec<Task> = Vec::new();
 
     match tasks_file_manager::get_saved_tasks() {

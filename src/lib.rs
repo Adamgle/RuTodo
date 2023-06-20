@@ -1,4 +1,4 @@
-#![allow(unused, unused_variables)]
+// #![allow(unused, unused_variables)]
 
 use chrono::format::{strftime::StrftimeItems, DelayedFormat, ParseError};
 use chrono::prelude::*;
@@ -302,7 +302,7 @@ fn handle_action_by_argument(tasks: &mut Vec<Task>, switch: String) -> Result<()
         // println!("{switch} {arg_to_switch}");
 
         match switch_seperated.as_str() {
-            "1" | "show-tasks" => Ok(cli_manager::show_tasks(tasks, None)),
+            "1" | "show-tasks" => Ok(cli_manager::show_tasks(tasks, None)?),
             "parse" => {
                 utils::parse_redirected_stream_of_show_tasks(tasks, PathBuf::from(arg_to_switch))
                     .map_err(|err| err.to_string())
@@ -321,7 +321,6 @@ pub fn spawn_cli_interface(tasks: &mut Vec<Task>) -> Result<(), String> {
 
     if args.len() > 1 {
         let switch = &args[1..].join(" ").to_string();
-        println!("{switch}");
         return handle_action_by_argument(tasks, switch.to_owned());
     }
 
@@ -345,18 +344,8 @@ pub fn spawn_cli_interface(tasks: &mut Vec<Task>) -> Result<(), String> {
                     || action.starts_with("1 ")
                     || action.starts_with("show task ") =>
             {
-                // show tasks | 1 => show tasks
-                // show task 1 | 1 1 => show task with specific id (label id)
-                // show tasks --thing "adasda sdas d asdasd" => show tasks that includes this string in thing field
-                // show tasks --status Postponed => show tasks with status as postpoend
-                // show tasks --deadline => sort tasks by deadline date
-                // show tasks --deadline tomorrow => show tasks with deadline that is tomorrow, ignoring hours:minutes
-                // show tasks --deadline tomorrow 12:30 => show tasks with deadline as tomorrow 12:30
-                // show tasks --status postponed => match every task with status as postponed
-                // show tasks --status postponed --date => match every task with status as postponed and sort it by date
-
                 if action == "show tasks" || action == "1" {
-                    cli_manager::show_tasks(tasks, None);
+                    cli_manager::show_tasks(tasks, None)?;
                     continue;
                 }
 
@@ -364,7 +353,7 @@ pub fn spawn_cli_interface(tasks: &mut Vec<Task>) -> Result<(), String> {
 
                 match action {
                     action if action.starts_with("show tasks ") || action.starts_with("1 ") => {
-                        let mut switches: Vec<(String, Option<String>)> = Vec::new();
+                        let mut switches: Vec<(String, Option<&[&str]>)> = Vec::new();
 
                         let switches_with_values = action
                             .trim_start_matches("show tasks ")
@@ -372,8 +361,6 @@ pub fn spawn_cli_interface(tasks: &mut Vec<Task>) -> Result<(), String> {
 
                         let switches_with_values =
                             switches_with_values.split_whitespace().collect::<Vec<_>>();
-
-                        let mut index_of_next_switch = 0;
 
                         let mut indexes_to_slice_with = switches_with_values
                             .iter()
@@ -389,9 +376,10 @@ pub fn spawn_cli_interface(tasks: &mut Vec<Task>) -> Result<(), String> {
                         let mut ranges: Vec<(usize, usize)> = vec![];
                         let mut idx = 0;
 
-                        while ranges.len() != indexes_to_slice_with.len() {
+                        // indexes_to_slice_with.len() - 1 'cause we are extending this vector explicitly
+                        while ranges.len() != indexes_to_slice_with.len() - 1 {
                             let slice_from = indexes_to_slice_with[idx];
-                            let mut slice_to = match indexes_to_slice_with.get(idx + 1) {
+                            let slice_to = match indexes_to_slice_with.get(idx + 1) {
                                 Some(slice_to_idx) => slice_to_idx.to_owned(),
                                 None => slice_from,
                             };
@@ -400,27 +388,21 @@ pub fn spawn_cli_interface(tasks: &mut Vec<Task>) -> Result<(), String> {
 
                             let range = (slice_from, slice_to);
                             ranges.push(range);
-
-                            // indexes_to_slice_with.len() - 1 'cause we are extending this vector explicitly
-                            if ranges.len() == indexes_to_slice_with.len() - 1 {
-                                break;
-                            }
                         }
 
-                        let ranges_len = ranges.len();
-
-                        for (range_idx, (from, to)) in ranges.into_iter().enumerate() {
+                        for (from, to) in ranges {
                             let switch_args_pair = &switches_with_values[from..to];
 
                             let switch = switch_args_pair[0].to_string();
 
                             if switch_args_pair.len() > 1 {
-                                let args = &switch_args_pair[1..].join(" ");
-                                switches.push((switch, Some(args.to_owned())))
+                                let args = &switch_args_pair[1..];
+                                switches.push((switch, Some(args)))
                             } else {
                                 switches.push((switch, None))
                             }
                         }
+                        cli_manager::show_tasks(tasks, Some(switches))?;
                     }
                     "show task " => (),
                     _ => (),
@@ -728,16 +710,74 @@ pub mod cli_manager {
         return input.trim().to_string();
     }
 
-    pub fn show_tasks(tasks: &Vec<Task>, switches: Option<Vec<(String, Option<String>)>>) {
-        // println!("{switches:?}");
+    pub fn show_tasks(
+        tasks: &Vec<Task>,
+        switches: Option<Vec<(String, Option<&[&str]>)>>,
+    ) -> Result<(), String> {
+        // show tasks | 1 => show tasks
+        // show task 1 | 1 1 => show task with specific id (label id)
+        // show tasks --thing "adasda sdas d asdasd" => show tasks that includes this string in thing field
+        // show tasks --status Postponed => show tasks with status as postpoend
+        // show tasks --deadline => sort tasks by deadline date
+        // show tasks --deadline tomorrow => show tasks with deadline that is tomorrow, ignoring hours:minutes
+        // show tasks --deadline tomorrow 12:30 => show tasks with deadline as tomorrow 12:30
+        // show tasks --status postponed => match every task with status as postponed
+        // show tasks --status postponed --date => match every task with status as postponed and sort it by date
+        // show tasks --alphabetical | --alph
+        // show tasks --date > 10/06/2023
 
         if tasks.len() == 0 {
             println!("No available tasks");
-            return ();
+            return Ok(());
         }
 
-        for task in tasks {
-            println!("{task}");
+        match switches {
+            Some(switches) => {
+                for switch_args_pair_option in switches {
+                    println!("{switch_args_pair_option:?}");
+                    let (switch, args) = (switch_args_pair_option.0, switch_args_pair_option.1);
+                    let switch = switch.to_lowercase();
+                    let switch = switch.trim_start_matches("--");
+
+                    match switch {
+                        "thing" | "status" => {
+                            if args.is_none() {
+                                return Err(format!(
+                                    "switch {switch} requiers additional arguments"
+                                ));
+                            }
+                        }
+                        _ => (),
+                    };
+
+                    match switch {
+                        "thing" => (),
+                        "status" => {
+                            let status = args.unwrap().join("");
+                            println!("This is: {status}");
+                            let filtered = tasks
+                                .iter()
+                                .filter(|&x| matches!(x.status, TaskStatus::Completed))
+                                .collect::<Vec<_>>();
+
+                            // let advanced_status_vector = &switches[1..].to_vec();
+                            // show_tasks(tasks, Some(advanced_status_vector));
+                        }
+                        "deadline" => (),
+                        // "date" => {
+                        //     if switches.contains("--")
+                        // }
+                        _ => (),
+                    }
+                }
+                Ok(())
+            }
+            None => {
+                for task in tasks {
+                    println!("{task}");
+                }
+                Ok(())
+            }
         }
     }
 
