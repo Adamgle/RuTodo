@@ -1,4 +1,4 @@
-// #![allow(unused, unused_variables)]
+#![allow(unused, unused_variables)]
 
 use chrono::format::{strftime::StrftimeItems, DelayedFormat, ParseError};
 use chrono::prelude::*;
@@ -10,7 +10,10 @@ use std::fmt;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::{self, BufRead, BufReader, Write};
+use std::path::PathBuf;
 use std::time::SystemTime;
+
+mod utils;
 
 #[derive(Debug)]
 pub struct Task {
@@ -22,7 +25,10 @@ pub struct Task {
 
 impl Task {
     fn add_task(tasks: &mut Vec<Task>) {
+        cli_manager::clear_console();
         println!("Type \"exit\" to break to the CLI user interface");
+        println!("{}{}", "Thing: String\n", 
+        "Deadline: format: 10/06/2023 12:30 | 10/06/2023 | tomorrow 12:30 | today 12:30 | tomorrow | 06/06/2023 | 12:30");
 
         'outer: loop {
             let parsed_deadline;
@@ -46,13 +52,14 @@ impl Task {
                     break 'outer;
                 }
 
-                parsed_deadline = match Deadline::new(&deadline.trim().to_string()) {
+                parsed_deadline = match Deadline::new(&deadline) {
                     Ok(deadline) => deadline,
                     Err(err) => {
-                        eprintln!("{}", err);
+                        eprintln!("{err}");
                         continue;
                     }
                 };
+                // parsed_deadline = Deadline::new(&deadline);
                 break;
             }
 
@@ -77,7 +84,7 @@ impl Task {
                 "Task successfully added:\nTask {{ thing: {}, status: {:?}, deadline: {} }}",
                 task.thing,
                 task.status,
-                DateTime::date_dmy(task.deadline.date)
+                DateTime::date_user_formating(task.deadline.date)
             );
 
             tasks.push(task);
@@ -183,15 +190,11 @@ impl Task {
 
         ids.sort();
 
-        // 1, 2, 3 4,5
-        //
-
         let mut i = 0;
         while i < ids.len() - 1 {
             let first = ids[i];
             let second = ids[i + 1];
             let diff = second - first;
-            println!("{diff}");
             if diff > 1 {
                 let slice_of_ids: Vec<i32> = (first + 1..second).collect();
                 available_ids.extend_from_slice(&slice_of_ids);
@@ -207,8 +210,6 @@ impl Task {
                 available_ids.push(id);
             }
         }
-
-        println!("ids: {ids:?}\n vai: {available_ids:?}");
 
         available_ids
     }
@@ -277,82 +278,35 @@ impl fmt::Display for TaskStatus {
 
 impl Deadline {
     fn new(input: &String) -> Result<Self, String> {
-        // format: DD/MM/YYYY HH:MM:SS
-        // let current_time = Self::date_now();
-
-        let splited = input
-            .split_whitespace()
-            .enumerate()
-            .map(|(idx, x)| match idx {
-                0 => match x.to_lowercase().as_str() {
-                    "today" => {
-                        let day_month_year = DateTime::date_dmy(DateTime::date_now());
-
-                        Ok(day_month_year
-                            .to_string()
-                            .split("/")
-                            .map(|x| x.to_string())
-                            .collect::<Vec<String>>())
-                    }
-                    "tomorrow" => {
-                        let day_month_year =
-                            DateTime::date_dmy(DateTime::date_now() + Duration::days(1));
-
-                        Ok(day_month_year
-                            .to_string()
-                            .split("/")
-                            .map(|x| x.to_string())
-                            .collect::<_>())
-                    }
-                    _ => Ok(x.split("/").map(|x| x.to_string()).collect::<Vec<String>>()),
-                },
-                1 => Ok(x.split(":").map(|x| x.to_string()).collect::<Vec<String>>()),
-                _ => Err("Invalid input; Example correct input: 10/06/2023 15:30"),
-            })
-            .collect::<Result<Vec<Vec<String>>, _>>();
-
-        if let Ok(splited) = splited.as_ref() {
-            for vec_num in splited.iter() {
-                for num_as_str in vec_num.iter() {
-                    if !num_as_str.chars().all(|num| num.is_numeric()) {
-                        return Err("Invalid character detected: contains non-numeric character"
-                            .to_string());
-                    }
-
-                    if let Err(_) = num_as_str.parse::<i32>() {
-                        return Err("Failed to parse the number".to_string());
-                    }
-                }
-            }
-        } else {
-            return Err("Missing value".to_string());
-        }
-
-        let date = splited
-            .unwrap()
-            .iter()
-            .enumerate()
-            .map(|(idx, x)| match idx {
-                0 => Ok(x.join("/")).to_owned(),
-                1 => Ok(x.join(":")).to_owned(),
-                _ => Err("Wrong input"),
-            })
-            .collect::<Result<Vec<String>, _>>()?;
-        match DateTime::parse_string_to_datetime_local(&date.join(" ").trim()) {
+        match DateTime::parse_formated_string_to_datetime(input.to_owned(), DateTime::date_now()) {
             Ok(date) => Ok(Self { date }),
-            Err(err) => Err(format!("Error occurred while parsing the date. Make sure it's in the right format\nMessage: {}", err)),
+            Err(err) => Err(format!("Error occurred while parsing the date. Make sure it's in the right format:\n{}\nMessage: {}", 
+            "Deadline: format: 10/06/2023 12:30 | 10/06/2023 | tomorrow 12:30 | today 12:30 | tomorrow | 06/06/2023 | 12:30", err)),
         }
     }
 }
 
 // Or the switches in the near future and maybe
-fn handle_action_by_argument(tasks: &Vec<Task>, switch: String) -> Result<(), String> {
-    // && switch.chars().all(|c| c.is_alphanumeric())
+fn handle_action_by_argument(tasks: &mut Vec<Task>, switch: String) -> Result<(), String> {
     if switch.starts_with("--") {
-        let switch = switch.trim_start_matches("--").to_string();
+        // TEMPORARY SOLUTION
+        // WILL HANDLE IT AS SEPERATE FUNCTION TO FIND WHERE SWITCH STARTS AND ENDS WITH ALL OF IT'S ARGUMENTS
+        let switch_seperated = switch
+            .trim_start_matches("--")
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .to_string();
+        let arg_to_switch = switch.split(" ").last().unwrap();
 
-        match switch.as_str() {
-            "1" | "show-tasks" => Ok(cli_manager::show_tasks(tasks)),
+        // println!("{switch} {arg_to_switch}");
+
+        match switch_seperated.as_str() {
+            "1" | "show-tasks" => Ok(cli_manager::show_tasks(tasks, None)),
+            "parse" => {
+                utils::parse_redirected_stream_of_show_tasks(tasks, PathBuf::from(arg_to_switch))
+                    .map_err(|err| err.to_string())
+            }
             _ => Err("swtich does not exists".to_string()),
         }
     } else {
@@ -366,7 +320,8 @@ pub fn spawn_cli_interface(tasks: &mut Vec<Task>) -> Result<(), String> {
     let args = std::env::args().collect::<Vec<String>>();
 
     if args.len() > 1 {
-        let switch = &args[1..].join("").to_string();
+        let switch = &args[1..].join(" ").to_string();
+        println!("{switch}");
         return handle_action_by_argument(tasks, switch.to_owned());
     }
 
@@ -383,7 +338,94 @@ pub fn spawn_cli_interface(tasks: &mut Vec<Task>) -> Result<(), String> {
             .expect("Unable to write to the writtable buffer");
 
         match action.trim().to_lowercase().to_string().as_str() {
-            "1" | "show tasks" => cli_manager::show_tasks(tasks),
+            action
+                if action == "1"
+                    || action == "show tasks"
+                    || action.starts_with("show tasks ")
+                    || action.starts_with("1 ")
+                    || action.starts_with("show task ") =>
+            {
+                // show tasks | 1 => show tasks
+                // show task 1 | 1 1 => show task with specific id (label id)
+                // show tasks --thing "adasda sdas d asdasd" => show tasks that includes this string in thing field
+                // show tasks --status Postponed => show tasks with status as postpoend
+                // show tasks --deadline => sort tasks by deadline date
+                // show tasks --deadline tomorrow => show tasks with deadline that is tomorrow, ignoring hours:minutes
+                // show tasks --deadline tomorrow 12:30 => show tasks with deadline as tomorrow 12:30
+                // show tasks --status postponed => match every task with status as postponed
+                // show tasks --status postponed --date => match every task with status as postponed and sort it by date
+
+                if action == "show tasks" || action == "1" {
+                    cli_manager::show_tasks(tasks, None);
+                    continue;
+                }
+
+                // println!("Working... {:?}", action.split("").collect::<Vec<_>>());
+
+                match action {
+                    action if action.starts_with("show tasks ") || action.starts_with("1 ") => {
+                        let mut switches: Vec<(String, Option<String>)> = Vec::new();
+
+                        let switches_with_values = action
+                            .trim_start_matches("show tasks ")
+                            .trim_start_matches("1 ");
+
+                        let switches_with_values =
+                            switches_with_values.split_whitespace().collect::<Vec<_>>();
+
+                        let mut index_of_next_switch = 0;
+
+                        let mut indexes_to_slice_with = switches_with_values
+                            .iter()
+                            .enumerate()
+                            .map(|(idx, x)| if x.starts_with("--") { idx as i32 } else { -1 })
+                            .filter(|&x| x >= 0)
+                            .map(|x| x as usize)
+                            .collect::<Vec<_>>();
+
+                        // explicitly pad rest index (equivalent to switches_with_values vector length)
+                        indexes_to_slice_with.push(switches_with_values.len());
+
+                        let mut ranges: Vec<(usize, usize)> = vec![];
+                        let mut idx = 0;
+
+                        while ranges.len() != indexes_to_slice_with.len() {
+                            let slice_from = indexes_to_slice_with[idx];
+                            let mut slice_to = match indexes_to_slice_with.get(idx + 1) {
+                                Some(slice_to_idx) => slice_to_idx.to_owned(),
+                                None => slice_from,
+                            };
+
+                            idx += 1;
+
+                            let range = (slice_from, slice_to);
+                            ranges.push(range);
+
+                            // indexes_to_slice_with.len() - 1 'cause we are extending this vector explicitly
+                            if ranges.len() == indexes_to_slice_with.len() - 1 {
+                                break;
+                            }
+                        }
+
+                        let ranges_len = ranges.len();
+
+                        for (range_idx, (from, to)) in ranges.into_iter().enumerate() {
+                            let switch_args_pair = &switches_with_values[from..to];
+
+                            let switch = switch_args_pair[0].to_string();
+
+                            if switch_args_pair.len() > 1 {
+                                let args = &switch_args_pair[1..].join(" ");
+                                switches.push((switch, Some(args.to_owned())))
+                            } else {
+                                switches.push((switch, None))
+                            }
+                        }
+                    }
+                    "show task " => (),
+                    _ => (),
+                };
+            }
             "2" | "add task" | "add" => Task::add_task(tasks),
             action
                 if action.starts_with("3 ")
@@ -440,8 +482,10 @@ pub fn spawn_cli_interface(tasks: &mut Vec<Task>) -> Result<(), String> {
                     eprintln!("{err}");
                 }
             }
+            // "parse" => utils::parse_user_format_tasks("file_path")
             "exit" => std::process::exit(0),
             "help" => cli_manager::show_user_actions(),
+            "cls" => cli_manager::clear_console(),
             _ => eprintln!("Unrecognized program action"),
         };
     }
@@ -622,17 +666,9 @@ impl DateTimeFormatter for DateTime<Local> {
         date: String,
         date_from: DateTime<Local>,
     ) -> Result<DateTime<Local>, String> {
-        // Possible inputs:
-
-        // 10/06/2023 12:30
-        // 10/06/2023 -> 10/06/2023 10:30
-        // tomorrow 12:30 -> 06/06/2023 12:30
-        // tomorrow
-        // today 12:30
-        // 12:30
-
         let mut composed_date: String = String::new();
 
+        let date = date.to_lowercase().to_string();
         let date_parts = date.split(" ").collect::<Vec<&str>>();
 
         if date == "tomorrow" || date == "today" || date_parts.len() == 2 {
@@ -692,7 +728,9 @@ pub mod cli_manager {
         return input.trim().to_string();
     }
 
-    pub fn show_tasks(tasks: &Vec<Task>) {
+    pub fn show_tasks(tasks: &Vec<Task>, switches: Option<Vec<(String, Option<String>)>>) {
+        // println!("{switches:?}");
+
         if tasks.len() == 0 {
             println!("No available tasks");
             return ();
@@ -738,6 +776,7 @@ pub mod tasks_file_manager {
     use super::*;
     use std::env;
     use std::path::PathBuf;
+
     pub fn get_tasks_file_path() -> Result<PathBuf, Box<dyn Error>> {
         let dir_path = match std::env::var("SystemDrive") {
             Ok(system_drive_letter) => {
@@ -767,8 +806,8 @@ pub mod tasks_file_manager {
         }
 
         let file_path = PathBuf::from(format!("{}tasks.txt", dir_path.display()));
-
         // println!("Using as file: {}", file_path.display());
+
         Ok(file_path)
     }
 
@@ -840,18 +879,18 @@ pub mod tasks_file_manager {
                     .map(|x| x.trim().split(": ").collect::<Vec<_>>())
                     .collect::<Vec<Vec<&str>>>();
 
-                let mut instance_fields_hashmap: HashMap<&str, &str> =
-                    HashMap::from([("thing", thing_value)]);
+                let mut instance_fields_hashmap: HashMap<String, String> =
+                    HashMap::from([("thing".to_string(), thing_value.to_string())]);
 
                 parsed.iter().for_each(|x| {
-                    let field = x.get(0).unwrap();
-                    let value = x.get(1).unwrap();
+                    let field = x.get(0).unwrap().to_string();
+                    let value = x.get(1).unwrap().to_string();
 
-                    if *field == "deadline" {
+                    if field == "deadline" {
                         let mut date = x.last().unwrap().split_whitespace();
                         let date = date.next().unwrap();
 
-                        instance_fields_hashmap.insert(field, date.trim());
+                        instance_fields_hashmap.insert(field, date.trim().to_string());
                     } else {
                         instance_fields_hashmap.insert(field, value);
                     }
@@ -864,7 +903,8 @@ pub mod tasks_file_manager {
         Ok(instaces)
     }
 
-    pub fn parse_task_from_file(instance_fields: &mut HashMap<&str, &str>) -> Task {
+    pub fn parse_task_from_file(instance_fields: &mut HashMap<String, String>) -> Task {
+        let deadline_date = instance_fields.remove("deadline").unwrap();
         Task {
             thing: instance_fields.remove("thing").unwrap().to_string(),
             status: match instance_fields
@@ -906,11 +946,16 @@ pub mod tasks_file_manager {
                 }
             },
             deadline: Deadline {
-                date: match DateTime::parse_from_rfc3339(
-                    instance_fields.remove("deadline").unwrap(),
-                ) {
-                    Ok(date) => date.with_timezone(&Local),
-                    Err(err) => self::panic!("{err}"),
+                date: if DateTime::is_valid_date_format(&deadline_date) {
+                    match DateTime::parse_string_to_datetime_local(&deadline_date) {
+                        Ok(date) => date,
+                        Err(err) => self::panic!("{err}"),
+                    }
+                } else {
+                    match DateTime::parse_from_rfc3339(&deadline_date) {
+                        Ok(date) => date.with_timezone(&Local),
+                        Err(err) => self::panic!("{err}"),
+                    }
                 },
             },
             label: instance_fields.remove("label").unwrap().to_string(),
