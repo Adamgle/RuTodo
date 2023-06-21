@@ -6,12 +6,12 @@ use chrono::Duration;
 use core::panic;
 use std::collections::HashMap;
 use std::error::Error;
-use std::fmt;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::time::SystemTime;
+use std::{fmt, vec};
 
 mod utils;
 
@@ -22,6 +22,17 @@ pub struct Task {
     deadline: Deadline,
     label: String,
 }
+
+// impl Clone for Task {
+//     fn clone(&self) -> Self {
+//         Task {
+//             thing: self.thing.clone(),
+//             status: self.status.clone(),
+//             deadline: self.deadline.(),
+//             label: self.label.clone(),
+//         }
+//     }
+// }
 
 impl Task {
     fn add_task(tasks: &mut Vec<Task>) {
@@ -726,16 +737,22 @@ pub mod cli_manager {
         // show tasks --alphabetical | --alph
         // show tasks --date > 10/06/2023
 
+        // let mut switches = switches;
+
         if tasks.len() == 0 {
             println!("No available tasks");
             return Ok(());
         }
 
+        println!("{switches:?}");
+
         match switches {
             Some(switches) => {
-                for switch_args_pair_option in switches {
-                    println!("{switch_args_pair_option:?}");
-                    let (switch, args) = (switch_args_pair_option.0, switch_args_pair_option.1);
+                for switch_args_pair_option in switches.iter() {
+                    let (switch, args) = (
+                        switch_args_pair_option.0.to_owned(),
+                        switch_args_pair_option.1,
+                    );
                     let switch = switch.to_lowercase();
                     let switch = switch.trim_start_matches("--");
 
@@ -754,14 +771,27 @@ pub mod cli_manager {
                         "thing" => (),
                         "status" => {
                             let status = args.unwrap().join("");
-                            println!("This is: {status}");
-                            let filtered = tasks
-                                .iter()
-                                .filter(|&x| matches!(x.status, TaskStatus::Completed))
+
+                            // We have to clone tasks to operate on own version on vec to make the function reqursive
+                            let tasks_clone = tasks_file_manager::get_saved_tasks()
+                                .map_err(|err| err.to_string())?;
+
+                            let filtered_by_switch = tasks_clone
+                                .into_iter()
+                                .filter(|task| matches!(task.status, TaskStatus::Completed))
                                 .collect::<Vec<_>>();
 
-                            // let advanced_status_vector = &switches[1..].to_vec();
-                            // show_tasks(tasks, Some(advanced_status_vector));
+                            // We are slicing switch that just executed
+                            let advanced_status_vector = switches[1..].to_vec();
+
+                            dbg!(&filtered_by_switch);
+
+                            // If there are no switches left, we're returning None
+                            // and returning output
+                            match advanced_status_vector.len() {
+                                0 => show_tasks(&filtered_by_switch, None)?,
+                                _ => show_tasks(&filtered_by_switch, Some(advanced_status_vector))?,
+                            };
                         }
                         "deadline" => (),
                         // "date" => {

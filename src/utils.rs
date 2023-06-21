@@ -44,7 +44,7 @@ pub fn parse_redirected_stream_of_show_tasks(
         tasks.push(task);
     });
 
-    if let Err(err) = save_tasks(&tasks) {
+    if let Err(err) = save_tasks(tasks) {
         eprint!("Could not save the parsed tasks to file: {err}");
     };
 
