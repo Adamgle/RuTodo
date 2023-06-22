@@ -1,14 +1,12 @@
-#![allow(unused, unused_variables)]
+// #![allow(unused, unused_variables)]
 
 pub mod utils;
 
-use core::slice;
-use std::collections::binary_heap::Iter;
-
 use rutodo::{spawn_cli_interface, Task};
 
+pub use rutodo::DateTimeFormatter;
+
 use rutodo::tasks_file_manager;
-use tasks_file_manager::parse_task_from_file;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args().collect::<Vec<_>>()[1..].is_empty() {

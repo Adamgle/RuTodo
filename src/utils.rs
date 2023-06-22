@@ -16,6 +16,15 @@ pub fn parse_redirected_stream_of_show_tasks(
 
     file_content = file_content.trim().to_string();
 
+    let mut all_ids = Task::get_all_ids(tasks);
+
+    let mut available_ids = Task::find_available_ids(&mut all_ids).into_iter();
+
+    let mut max_id = match all_ids.into_iter().max() {
+        Some(max) => max,
+        None => 0,
+    };
+
     file_content.split("\n\r").for_each(|line| {
         let mut instance_key_values = HashMap::new();
 
@@ -23,9 +32,18 @@ pub fn parse_redirected_stream_of_show_tasks(
         let line = line
             .split("\r")
             .enumerate()
-            .map(|(idx, e)| match idx {
-                0 => format!("label: {}", e),
-                _ => e.to_string(),
+            .map(|(idx, e)| {
+                let next_id = match available_ids.next() {
+                    Some(id) => id,
+                    None => {
+                        max_id += 1;
+                        max_id
+                    }
+                };
+                match idx {
+                    0 => format!("label: Task {next_id}"),
+                    _ => e.to_string(),
+                }
             })
             .collect::<Vec<String>>();
 
@@ -40,7 +58,9 @@ pub fn parse_redirected_stream_of_show_tasks(
                 instance_key_values.insert(key.trim().to_lowercase(), value);
             }
         });
+
         let task = parse_task_from_file(&mut instance_key_values);
+
         tasks.push(task);
     });
 

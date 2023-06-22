@@ -182,7 +182,7 @@ impl Task {
         Ok(())
     }
 
-    fn find_available_ids(ids: &mut Vec<i32>) -> Vec<i32> {
+    pub fn find_available_ids(ids: &mut Vec<i32>) -> Vec<i32> {
         if ids.len() == 0 {
             return vec![];
         }
@@ -214,15 +214,19 @@ impl Task {
         available_ids
     }
 
-    fn get_all_ids(tasks: &Vec<Task>) -> Vec<i32> {
+    pub fn get_all_ids(tasks: &Vec<Task>) -> Vec<i32> {
         tasks
             .iter()
             .filter_map(|task| {
-                task.label
-                    .chars()
-                    .last()?
-                    .to_digit(10)
-                    .map(|digit| digit as i32)
+                Some(
+                    task.label
+                        .split(" ")
+                        .collect::<Vec<_>>()
+                        .last()
+                        .unwrap()
+                        .parse::<i32>()
+                        .unwrap(),
+                )
             })
             .collect()
     }
@@ -251,7 +255,7 @@ struct Deadline {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum TaskStatus {
+pub enum TaskStatus {
     Completed,
     Todo,
     Postponed(DateTime<Local>),
@@ -567,7 +571,7 @@ help => spawn this message"#
     }
 }
 
-trait DateTimeFormatter {
+pub trait DateTimeFormatter {
     fn is_valid_date_format(date_string: &str) -> bool;
     fn is_valid_dmy_format(date_string: &str) -> bool;
     fn is_valid_hm_format(date_string: &str) -> bool;
@@ -746,8 +750,9 @@ pub mod cli_manager {
 
                 let filtered_by_switch = match switch {
                     "thing" => {
-                        let thing = args.unwrap().join("");
+                        let thing = args.unwrap().join(" ");
 
+                        println!("{thing}");
                         let filtered_by_switch = tasks_clone
                             .into_iter()
                             .filter(|task| {
@@ -1037,21 +1042,11 @@ pub mod tasks_file_manager {
                         let date = date.trim_end_matches(")");
 
                         match status.to_lowercase().to_string().as_str() {
-                            "postponed" => TaskStatus::Postponed(
-                                DateTime::parse_from_rfc3339(date)
-                                    .unwrap()
-                                    .with_timezone(&Local),
-                            ),
-                            "expired" => TaskStatus::Expired(
-                                DateTime::parse_from_rfc3339(date)
-                                    .unwrap()
-                                    .with_timezone(&Local),
-                            ),
-                            "aborted" => TaskStatus::Aborted(
-                                DateTime::parse_from_rfc3339(date)
-                                    .unwrap()
-                                    .with_timezone(&Local),
-                            ),
+                            "postponed" => {
+                                TaskStatus::Postponed(parse_date_inside_task_status(date))
+                            }
+                            "expired" => TaskStatus::Expired(parse_date_inside_task_status(date)),
+                            "aborted" => TaskStatus::Aborted(parse_date_inside_task_status(date)),
                             _ => TaskStatus::Todo,
                         }
                     } else {
@@ -1073,6 +1068,16 @@ pub mod tasks_file_manager {
                 },
             },
             label: instance_fields.remove("label").unwrap().to_string(),
+        }
+    }
+
+    fn parse_date_inside_task_status(date: &str) -> DateTime<Local> {
+        match DateTime::parse_from_rfc3339(date) {
+            Ok(date) => date.with_timezone(&Local),
+            Err(err) => match DateTime::parse_string_to_datetime_local(date) {
+                Ok(date) => date,
+                Err(err_next) => self::panic!("Failed parsing after 2 tries: {err_next} {err}"),
+            },
         }
     }
 }

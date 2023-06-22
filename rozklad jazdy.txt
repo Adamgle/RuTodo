@@ -1,2 +1,0 @@
-// implement a copy, clone trait for tasks 
-// parsing file with --parse joins the tasks with possible duplicated id, process hole tasks to redefine valid ids or something else I dont know
