@@ -707,6 +707,7 @@ pub mod cli_manager {
         tasks: &Vec<Task>,
         switches: Option<Vec<(String, Option<&[&str]>)>>,
     ) -> Result<(), String> {
+        // That's the docs, yea you heard me right
         // show tasks | 1 => show tasks
         // show task 1 | 1 1 => show task with specific id (label id)
         // show tasks --thing "adasda sdas d asdasd" => show tasks that includes this string in thing field
@@ -726,129 +727,117 @@ pub mod cli_manager {
 
         match switches {
             Some(switches) => {
-                for switch_args_pair_option in switches.iter() {
-                    let (switch, args) = (
-                        switch_args_pair_option.0.to_owned(),
-                        switch_args_pair_option.1,
-                    );
-                    let switch = switch.to_lowercase();
-                    let switch = switch.trim_start_matches("--");
+                let switch_args_pair = switches[0].to_owned();
+                let (switch, args) = (switch_args_pair.0, switch_args_pair.1);
+                let switch = switch.to_lowercase();
+                let switch = switch.trim_start_matches("--");
 
-                    match switch {
-                        "thing" | "status" => {
-                            if args.is_none() {
-                                return Err(format!(
-                                    "switch {switch} requiers additional arguments"
-                                ));
-                            }
+                match switch {
+                    "thing" | "status" => {
+                        if args.is_none() {
+                            return Err(format!("switch {switch} requiers additional arguments"));
                         }
-                        _ => (),
-                    };
+                    }
+                    _ => (),
+                };
 
-                    // We have to clone tasks to operate on own version of vec to make the function reqursive and type valid
-                    let mut tasks_clone = tasks.clone();
+                // We have to clone tasks to operate on own version of vec to make the function reqursive and type valid
+                let mut tasks_clone = tasks.clone();
 
-                    println!("Tasks: {}, Tasks_clone: {}", tasks.len(), tasks_clone.len());
+                let filtered_by_switch = match switch {
+                    "thing" => {
+                        let thing = args.unwrap().join("");
 
-                    let filtered_by_switch = match switch {
-                        "thing" => {
-                            let thing = args.unwrap().join("");
+                        let filtered_by_switch = tasks_clone
+                            .into_iter()
+                            .filter(|task| {
+                                task.thing
+                                    .strip_prefix("\"")
+                                    .and_then(|s| s.strip_suffix("\""))
+                                    .unwrap()
+                                    .to_string()
+                                    .to_lowercase()
+                                    .starts_with(&thing.to_lowercase())
+                            })
+                            .collect::<Vec<_>>();
+
+                        filtered_by_switch
+                    }
+                    "status" => {
+                        let status = args.unwrap().join("");
+
+                        let filtered_by_switch = tasks_clone
+                            .into_iter()
+                            .filter(|task| match_status(task, &status))
+                            .collect::<Vec<_>>();
+
+                        filtered_by_switch
+                    }
+                    "deadline" => {
+                        match args {
+                            Some(_) => {
+                                return Err("This switch does not take any additional arguments"
+                                    .to_string())
+                            }
+                            None => tasks_clone.sort_by_key(|task| task.deadline.date),
+                        }
+                        tasks_clone
+                    }
+                    "date" => match args {
+                        Some(args) => {
+                            let parsable_date_format = args.join(" ").to_string();
+                            let input_date = DateTime::parse_formated_string_to_datetime(
+                                parsable_date_format,
+                                DateTime::date_now(),
+                            )?;
 
                             let filtered_by_switch = tasks_clone
                                 .into_iter()
-                                .filter(|task| {
-                                    task.thing
-                                        .strip_prefix("\"")
-                                        .and_then(|s| s.strip_suffix("\""))
-                                        .unwrap()
-                                        .to_string()
-                                        .to_lowercase()
-                                        .starts_with(&thing.to_lowercase())
+                                .filter(|task| match task.status {
+                                    TaskStatus::Postponed(date)
+                                    | TaskStatus::Expired(date)
+                                    | TaskStatus::Aborted(date) => {
+                                        date.day() == input_date.day()
+                                            && date.month() == input_date.month()
+                                            && date.year() == input_date.year()
+                                    }
+                                    _ => {
+                                        task.deadline.date.day() == input_date.day()
+                                            && task.deadline.date.month() == input_date.month()
+                                            && task.deadline.date.year() == input_date.year()
+                                    }
                                 })
                                 .collect::<Vec<_>>();
 
                             filtered_by_switch
                         }
-                        "status" => {
-                            let status = args.unwrap().join("");
-
-                            let filtered_by_switch = tasks_clone
-                                .into_iter()
-                                .filter(|task| match_status(task, &status))
-                                .collect::<Vec<_>>();
-
-                            filtered_by_switch
-                        }
-                        "deadline" => {
-                            match args {
-                                Some(_) => {
-                                    return Err(
-                                        "This switch does not take any additional arguments"
-                                            .to_string(),
-                                    )
-                                }
-                                None => tasks_clone.sort_by_key(|task| task.deadline.date),
-                            }
+                        None => {
+                            tasks_clone.sort_by_key(|task| match task.status {
+                                TaskStatus::Postponed(date)
+                                | TaskStatus::Expired(date)
+                                | TaskStatus::Aborted(date) => date,
+                                _ => task.deadline.date,
+                            });
                             tasks_clone
                         }
-                        "date" => match args {
-                            Some(args) => {
-                                let parsable_date_format = args.join(" ").to_string();
-                                let input_date = DateTime::parse_formated_string_to_datetime(
-                                    parsable_date_format,
-                                    DateTime::date_now(),
-                                )?;
+                    },
+                    _ => return Err("inexsistent switch".to_string()),
+                };
 
-                                let filtered_by_switch = tasks_clone
-                                    .into_iter()
-                                    .filter(|task| match task.status {
-                                        TaskStatus::Postponed(date)
-                                        | TaskStatus::Expired(date)
-                                        | TaskStatus::Aborted(date) => {
-                                            date.day() == input_date.day()
-                                                && date.month() == input_date.month()
-                                                && date.year() == input_date.year()
-                                        }
-                                        _ => {
-                                            task.deadline.date.day() == input_date.day()
-                                                && task.deadline.date.month() == input_date.month()
-                                                && task.deadline.date.year() == input_date.year()
-                                        }
-                                    })
-                                    .collect::<Vec<_>>();
+                // We are slicing switch that just executed
+                let advanced_status_vector = switches[1..].to_vec();
 
-                                filtered_by_switch
-                            }
-                            None => {
-                                tasks_clone.sort_by_key(|task| match task.status {
-                                    TaskStatus::Postponed(date)
-                                    | TaskStatus::Expired(date)
-                                    | TaskStatus::Aborted(date) => date,
-                                    _ => task.deadline.date,
-                                });
-                                tasks_clone
-                            }
-                        },
-
-                        _ => return Err("inexsistent switch".to_string()),
-                    };
-
-                    // We are slicing switch that just executed
-                    let advanced_status_vector = switches[1..].to_vec();
-
-                    // If there are no switches left, we're returning None
-                    // and returning output
-                    match advanced_status_vector.len() {
-                        0 => show_tasks(&filtered_by_switch, None)?,
-                        _ => show_tasks(&filtered_by_switch, Some(advanced_status_vector))?,
-                    };
-                }
+                // If there are no switches left, we're returning None
+                // and returning output
+                match advanced_status_vector.len() {
+                    0 => show_tasks(&filtered_by_switch, None)?,
+                    _ => show_tasks(&filtered_by_switch, Some(advanced_status_vector))?,
+                };
             }
             None => {
-                println!("{}", tasks.len());
-                // for task in tasks {
-                //     println!("{task}");
-                // }
+                for task in tasks {
+                    println!("{task}");
+                }
                 return Ok(());
             }
         };
