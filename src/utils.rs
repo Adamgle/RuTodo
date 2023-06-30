@@ -1,14 +1,24 @@
+use crate::tasks_file_manager::{parse_task_from_file, save_tasks};
+use std::io::Write;
 use std::{collections::HashMap, error::Error, fs::OpenOptions, io::Read};
 
-use crate::tasks_file_manager::{parse_task_from_file, save_tasks};
+use crate::DateTimeFormatter;
 use crate::Task;
+use chrono::DateTime;
+use std::path::PathBuf;
 
 // Accepts absolute file path
 pub fn parse_redirected_stream_of_show_tasks(
     tasks: &mut Vec<Task>,
-    file_path: std::path::PathBuf,
+    file_path: PathBuf,
 ) -> Result<(), Box<dyn Error>> {
     let mut file = OpenOptions::new().read(true).open(file_path)?;
+    let mut log_file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .append(true)
+        .create(true)
+        .open(r"C:\Dev\Rust\rutodo\logs.txt")?;
 
     let mut file_content: String = String::new();
 
@@ -25,29 +35,52 @@ pub fn parse_redirected_stream_of_show_tasks(
         None => 0,
     };
 
-    file_content.split("\n\r").for_each(|line| {
-        let mut instance_key_values = HashMap::new();
+    log_file
+        .write_fmt(format_args!("Begin log: {}\n\n", DateTime::date_now()))
+        .expect("Could not write to file log");
 
-        let line = line.replace("\n", "").trim().to_string();
-        let line = line
-            .split("\r")
+    let mut key_value_fields_vec: Vec<Vec<String>> = vec![];
+
+    let mut split_from = 0;
+    let lines = file_content
+        .lines()
+        .map(|x| x.to_string())
+        .collect::<Vec<_>>();
+
+    lines.iter().enumerate().for_each(|(idx, line)| {
+        if line == "" {
+            if split_from == 0 {
+                key_value_fields_vec.push(lines[split_from..idx].to_vec());
+            } else {
+                key_value_fields_vec.push(lines[split_from + 1..idx].to_vec());
+            }
+            split_from = idx;
+        } else if idx == lines.len() - 1 {
+            key_value_fields_vec.push(lines[split_from + 1..].to_vec());
+        }
+    });
+
+    let mut instance_key_values: HashMap<String, String> = HashMap::new();
+
+    for entries in key_value_fields_vec {
+        let next_id = match available_ids.next() {
+            Some(id) => id,
+            None => {
+                max_id += 1;
+                max_id
+            }
+        };
+
+        let instance_entries = entries
+            .into_iter()
             .enumerate()
-            .map(|(idx, e)| {
-                let next_id = match available_ids.next() {
-                    Some(id) => id,
-                    None => {
-                        max_id += 1;
-                        max_id
-                    }
-                };
-                match idx {
-                    0 => format!("label: Task {next_id}"),
-                    _ => e.to_string(),
-                }
+            .map(|(idx, e)| match idx {
+                0 => format!("label: Task {next_id}"),
+                _ => e.to_string(),
             })
             .collect::<Vec<String>>();
 
-        line.iter().for_each(|x| {
+        instance_entries.iter().for_each(|x| {
             if let Some((key, value)) = x.split_once(":") {
                 let key = key.trim().to_lowercase();
                 let value = if key == "thing" {
@@ -61,11 +94,15 @@ pub fn parse_redirected_stream_of_show_tasks(
 
         let task = parse_task_from_file(&mut instance_key_values);
 
+        log_file
+            .write_fmt(format_args!("{}\n", task))
+            .expect("Could not write to file log");
+
         tasks.push(task);
-    });
+    }
 
     if let Err(err) = save_tasks(tasks) {
-        eprint!("Could not save the parsed tasks to file: {err}");
+        eprintln!("Could not save the parsed tasks to file: {err}");
     };
 
     Ok(())

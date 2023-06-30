@@ -1,4 +1,0 @@
-Task -12312313121231312312
-Thing: Work on this app till deadline
-Status: Completed
-Deadline: 18/06/2023 22:00

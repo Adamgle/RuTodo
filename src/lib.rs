@@ -13,6 +13,8 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 use std::{fmt, vec};
 
+use crate::cli_manager::show_task;
+
 mod utils;
 
 #[derive(Debug, Clone)]
@@ -20,7 +22,7 @@ pub struct Task {
     thing: String,
     status: TaskStatus,
     deadline: Deadline,
-    label: String,
+    pub label: String,
 }
 
 impl Task {
@@ -59,7 +61,6 @@ impl Task {
                         continue;
                     }
                 };
-                // parsed_deadline = Deadline::new(&deadline);
                 break;
             }
 
@@ -99,6 +100,7 @@ impl Task {
         tasks: &mut Vec<Task>,
         task_label_number: String,
         switch_field: &Option<String>,
+        tasks_history: &mut HashMap<String, Vec<Task>>,
     ) -> Result<(), String> {
         let task_labeled_by = format!("Task {task_label_number}");
         let mut is_switch_invalid = false;
@@ -133,6 +135,12 @@ impl Task {
                             .to_string()
                     }
 
+                    let mut prev_task: Option<Task> = None;
+
+                    if field_to_edit == "thing" || field_to_edit == "status" {
+                        prev_task = Some(task.clone());
+                    }
+
                     if field_to_edit == "thing" {
                         EditTaskConfig::edit_thing(task)
                     } else if field_to_edit == "status" {
@@ -143,7 +151,21 @@ impl Task {
                     } else {
                         eprintln!("No such field to edit, you lying son of a bitch!");
                         continue;
-                        // break;
+                    }
+
+                    if field_to_edit == "thing" || field_to_edit == "status" {
+                        if let Some(prev_task) = prev_task {
+                            tasks_history
+                                .entry(task.label.clone())
+                                .or_default()
+                                .push(prev_task);
+                        }
+
+                        if let Err(err) =
+                            tasks_file_manager::save_tasks_history(tasks, tasks_history)
+                        {
+                            eprintln!("{err}");
+                        };
                     }
 
                     if let Err(err) = tasks_file_manager::save_tasks(&tasks) {
@@ -159,7 +181,11 @@ impl Task {
         Ok(())
     }
 
-    fn delete_task(tasks: &mut Vec<Task>, task_label_number: String) -> Result<(), String> {
+    fn delete_task(
+        tasks: &mut Vec<Task>,
+        tasks_history: &mut HashMap<String, Vec<Task>>,
+        task_label_number: String,
+    ) -> Result<(), String> {
         match task_label_number.as_str() {
             "all" => {
                 tasks.clear();
@@ -169,6 +195,7 @@ impl Task {
                 let task_labeled_by = format!("Task {task_number}");
                 if tasks.iter().any(|x| x.label == task_labeled_by) {
                     tasks.retain(|x| *x.label != task_labeled_by);
+                    tasks_history.remove(&task_labeled_by);
                 } else {
                     eprintln!("Task with label {task_labeled_by} does not exists");
                 }
@@ -179,7 +206,35 @@ impl Task {
             eprintln!("{err}");
         }
 
+        if let Err(err) = tasks_file_manager::save_tasks_history(tasks, tasks_history) {
+            eprintln!("{err}");
+        };
+
         Ok(())
+    }
+
+    pub fn mark_expired_tasks_as_status_expired(tasks: &mut Vec<Task>) {
+        for task in tasks.into_iter() {
+            if !cli_manager::match_status(task, "expired") {
+                match task.status {
+                    TaskStatus::Postponed(date) => {
+                        let now = DateTime::date_now();
+                        if date < now {
+                            task.status = TaskStatus::Expired(now);
+                        }
+                    }
+                    _ => {
+                        let now = DateTime::date_now();
+                        if task.deadline.date < now {
+                            task.status = TaskStatus::Expired(now);
+                        }
+                    }
+                }
+            }
+        }
+        if let Err(err) = tasks_file_manager::save_tasks(tasks) {
+            eprint!("{err}");
+        };
     }
 
     pub fn find_available_ids(ids: &mut Vec<i32>) -> Vec<i32> {
@@ -302,7 +357,7 @@ fn handle_action_by_argument(tasks: &mut Vec<Task>, switch: String) -> Result<()
             .unwrap()
             .to_string();
         let arg_to_switch = switch.split(" ").last().unwrap();
-
+        
         match switch_seperated.as_str() {
             "1" | "show-tasks" => Ok(cli_manager::show_tasks(tasks, None)?),
             "parse" => {
@@ -318,7 +373,10 @@ fn handle_action_by_argument(tasks: &mut Vec<Task>, switch: String) -> Result<()
     Ok(())
 }
 
-pub fn spawn_cli_interface(tasks: &mut Vec<Task>) -> Result<(), String> {
+pub fn spawn_cli_interface(
+    tasks: &mut Vec<Task>,
+    mut tasks_history: &mut HashMap<String, Vec<Task>>,
+) -> Result<(), String> {
     let args = std::env::args().collect::<Vec<String>>();
 
     if args.len() > 1 {
@@ -338,6 +396,14 @@ pub fn spawn_cli_interface(tasks: &mut Vec<Task>) -> Result<(), String> {
             .read_line(&mut action)
             .expect("Unable to write to the writtable buffer");
 
+        let switches = match cli_manager::parse_to_switches_and_arguments(action.trim()) {
+            Ok(switches) => switches,
+            Err(err) => {
+                eprintln!("{err}");
+                continue;
+            }
+        };
+
         match action.trim().to_lowercase().to_string().as_str() {
             action
                 if action == "1"
@@ -353,64 +419,46 @@ pub fn spawn_cli_interface(tasks: &mut Vec<Task>) -> Result<(), String> {
                     continue;
                 }
 
-                // println!("Working... {:?}", action.split("").collect::<Vec<_>>());
-
                 match action {
                     action if action.starts_with("show tasks ") || action.starts_with("1 ") => {
-                        let mut switches: Vec<(String, Option<&[&str]>)> = Vec::new();
-
-                        let switches_with_values = action
-                            .trim_start_matches("show tasks ")
-                            .trim_start_matches("1 ");
-
-                        let switches_with_values =
-                            switches_with_values.split_whitespace().collect::<Vec<_>>();
-
-                        let mut indexes_to_slice_with = switches_with_values
-                            .iter()
-                            .enumerate()
-                            .map(|(idx, x)| if x.starts_with("--") { idx as i32 } else { -1 })
-                            .filter(|&x| x >= 0)
-                            .map(|x| x as usize)
-                            .collect::<Vec<_>>();
-
-                        // explicitly pad rest index (equivalent to switches_with_values vector length)
-                        indexes_to_slice_with.push(switches_with_values.len());
-
-                        let mut ranges: Vec<(usize, usize)> = vec![];
-                        let mut idx = 0;
-
-                        // indexes_to_slice_with.len() - 1 'cause we are extending this vector explicitly
-                        while ranges.len() != indexes_to_slice_with.len() - 1 {
-                            let slice_from = indexes_to_slice_with[idx];
-                            let slice_to = match indexes_to_slice_with.get(idx + 1) {
-                                Some(slice_to_idx) => slice_to_idx.to_owned(),
-                                None => slice_from,
-                            };
-
-                            idx += 1;
-
-                            let range = (slice_from, slice_to);
-                            ranges.push(range);
-                        }
-
-                        for (from, to) in ranges {
-                            let switch_args_pair = &switches_with_values[from..to];
-
-                            let switch = switch_args_pair[0].to_string();
-
-                            if switch_args_pair.len() > 1 {
-                                let args = &switch_args_pair[1..];
-                                switches.push((switch, Some(args)))
-                            } else {
-                                switches.push((switch, None))
-                            }
-                        }
-                        if let Err(err) = cli_manager::show_tasks(tasks, Some(switches)) {
+                        if let Err(err) = cli_manager::show_tasks(tasks, switches) {
                             eprintln!("Error: {err}");
                         }
                     }
-                    "show task " => (),
+                    action if action.starts_with("show task ") => {
+                        let task_label_number = action.trim_start_matches("show task ");
+
+                        match switches {
+                            Some(switches) => {
+                                let task_label_number = &task_label_number
+                                    [0..task_label_number.find("--").unwrap()]
+                                    .trim();
+
+                                for (switch, _) in switches {
+                                    let switch = switch.trim_start_matches("--");
+                                    match switch {
+                                        "history" => {
+                                            let label = format!("Task {}", task_label_number);
+
+                                            match tasks_history.get(&label) {
+                                                Some(tasks_history) => {
+                                                    println!("Tasks history");
+                                                    for task in tasks_history {
+                                                        println!("{task}");
+                                                    }
+                                                }
+                                                None => {
+                                                    eprintln!("No previous versions of this task")
+                                                }
+                                            }
+                                        }
+                                        _ => eprintln!("Inexistent switch"),
+                                    };
+                                }
+                            }
+                            None => show_task(tasks, task_label_number),
+                        }
+                    }
                     _ => (),
                 };
             }
@@ -438,7 +486,9 @@ pub fn spawn_cli_interface(tasks: &mut Vec<Task>) -> Result<(), String> {
                 };
 
                 if task_number.chars().all(|c| c.is_numeric()) {
-                    if let Err(err) = Task::edit_task(tasks, task_number, &switch_field) {
+                    if let Err(err) =
+                        Task::edit_task(tasks, task_number, &switch_field, &mut tasks_history)
+                    {
                         eprintln!("{err}");
                     }
                 } else {
@@ -466,7 +516,7 @@ pub fn spawn_cli_interface(tasks: &mut Vec<Task>) -> Result<(), String> {
                         }
                     };
 
-                if let Err(err) = Task::delete_task(tasks, task_number) {
+                if let Err(err) = Task::delete_task(tasks, tasks_history, task_number) {
                     eprintln!("{err}");
                 }
             }
@@ -501,7 +551,8 @@ impl EditTaskConfig {
             cli_manager::clear_console();
 
             println!(
-                "Available options: {}",
+                "{}\nAvailable options: {}",
+                task,
                 r#"
 TaskStatus {
     Completed,
@@ -512,6 +563,7 @@ TaskStatus {
 help => spawn this message"#
             );
         };
+
         help_message();
 
         use TaskStatus::{Aborted, Completed, Postponed, Todo};
@@ -657,7 +709,8 @@ impl DateTimeFormatter for DateTime<Local> {
                 hm = date_parts[1].to_string();
             }
 
-            match date_parts[0] {
+            let dmy_part = date_parts[0];
+            match dmy_part {
                 "tomorrow" => {
                     let relative_tomorrow =
                         DateTime::date_dmy(date_from + Duration::days(1)).to_string();
@@ -707,9 +760,84 @@ pub mod cli_manager {
         return input.trim().to_string();
     }
 
+    // parse swit
+    pub fn parse_to_switches_and_arguments<'a>(
+        action: &'a str,
+    ) -> Result<Option<Vec<(String, Option<Vec<&'a str>>)>>, String> {
+        let switches_with_arguments = match action.find("--") {
+            Some(idx) => &action[idx..],
+            None => return Ok(None),
+        };
+
+        if !switches_with_arguments.starts_with("--") {
+            return Err(format!("Invalid switch format"));
+        }
+
+        let mut switches: Vec<(String, Option<Vec<&str>>)> = Vec::new();
+
+        let switches_with_arguments = switches_with_arguments
+            .split_whitespace()
+            .collect::<Vec<_>>();
+
+        let mut indexes_to_slice_with = switches_with_arguments
+            .iter()
+            .enumerate()
+            .map(|(idx, x)| if x.starts_with("--") { idx as i32 } else { -1 })
+            .filter(|&x| x >= 0)
+            .map(|x| x as usize)
+            .collect::<Vec<_>>();
+
+        // explicitly pad rest index (equivalent to switches_with_values vector length)
+        indexes_to_slice_with.push(switches_with_arguments.len());
+
+        let mut ranges: Vec<(usize, usize)> = vec![];
+        let mut idx = 0;
+
+        // indexes_to_slice_with.len() - 1 'cause we are extending this vector explicitly
+        while ranges.len() != indexes_to_slice_with.len() - 1 {
+            let slice_from = indexes_to_slice_with[idx];
+            let slice_to = match indexes_to_slice_with.get(idx + 1) {
+                Some(slice_to_idx) => slice_to_idx.to_owned(),
+                None => slice_from,
+            };
+
+            idx += 1;
+
+            let range = (slice_from, slice_to);
+            ranges.push(range);
+        }
+
+        for (from, to) in ranges {
+            let switch_args_pair = switches_with_arguments[from..to].to_vec();
+
+            let switch = switch_args_pair[0].to_string();
+
+            if switch_args_pair.len() > 1 {
+                let args = switch_args_pair[1..].to_vec();
+                switches.push((switch, Some(args)))
+            } else {
+                switches.push((switch, None))
+            }
+        }
+
+        Ok(Some(switches))
+    }
+
+    pub fn show_task(tasks: &Vec<Task>, task_label_number: &str) {
+        if task_label_number.chars().all(|c| c.is_numeric()) {
+            match tasks
+                .iter()
+                .find(|task| task.label.split_whitespace().last().unwrap() == task_label_number)
+            {
+                Some(task) => println!("{task}"),
+                None => eprintln!("Could not found task with this label number"),
+            }
+        }
+    }
+
     pub fn show_tasks(
         tasks: &Vec<Task>,
-        switches: Option<Vec<(String, Option<&[&str]>)>>,
+        switches: Option<Vec<(String, Option<Vec<&str>>)>>,
     ) -> Result<(), String> {
         // That's the docs, yea you heard me right
         // show tasks | 1 => show tasks
@@ -752,7 +880,6 @@ pub mod cli_manager {
                     "thing" => {
                         let thing = args.unwrap().join(" ");
 
-                        println!("{thing}");
                         let filtered_by_switch = tasks_clone
                             .into_iter()
                             .filter(|task| {
@@ -849,7 +976,7 @@ pub mod cli_manager {
         Ok(())
     }
 
-    fn match_status(task: &Task, status: &str) -> bool {
+    pub fn match_status(task: &Task, status: &str) -> bool {
         match status {
             "completed" => matches!(task.status, TaskStatus::Completed),
             "todo" => matches!(task.status, TaskStatus::Todo),
@@ -896,7 +1023,8 @@ pub mod tasks_file_manager {
     use std::env;
     use std::path::PathBuf;
 
-    pub fn get_tasks_file_path() -> Result<PathBuf, Box<dyn Error>> {
+    // filename with extension
+    pub fn make_file_path_in_working_dir(filename: &str) -> Result<PathBuf, Box<dyn Error>> {
         let dir_path = match std::env::var("SystemDrive") {
             Ok(system_drive_letter) => {
                 let username = whoami::username();
@@ -924,14 +1052,44 @@ pub mod tasks_file_manager {
             fs::create_dir_all(&dir_path)?;
         }
 
-        let file_path = PathBuf::from(format!("{}tasks.txt", dir_path.display()));
+        let file_path = PathBuf::from(format!("{}{filename}", dir_path.display()));
         // println!("Using as file: {}", file_path.display());
 
         Ok(file_path)
     }
 
+    pub fn save_tasks_history(
+        tasks: &Vec<Task>,
+        tasks_history: &mut HashMap<String, Vec<Task>>,
+    ) -> Result<(), Box<dyn Error>> {
+        let file_path = make_file_path_in_working_dir("tasks_history.txt")?;
+
+        let mut file = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .create(true)
+            .open(file_path)?;
+
+        if tasks.is_empty() {
+            file.set_len(0)?;
+            return Ok(());
+        }
+
+        for (_, tasks) in tasks_history.iter() {
+            for task in tasks {
+                file.write_fmt(format_args!(
+                    "Task {{ thing: {}, status: {}, label: {}, deadline: {:?} }}\n",
+                    task.thing, task.status, task.label, task.deadline
+                ))?;
+                file.flush().expect("Failed to flush buffer");
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn save_tasks(tasks: &Vec<Task>) -> Result<(), Box<dyn Error>> {
-        let file_path = get_tasks_file_path()?;
+        let file_path = make_file_path_in_working_dir("tasks.txt")?;
 
         let mut file = OpenOptions::new()
             .write(true)
@@ -946,7 +1104,7 @@ pub mod tasks_file_manager {
 
         for task in tasks {
             file.write_fmt(format_args!(
-                "Task {{ thing: {}, status: {:?}, label: {}, deadline: {:?} }}\n",
+                "Task {{ thing: {}, status: {}, label: {}, deadline: {:?} }}\n",
                 task.thing, task.status, task.label, task.deadline
             ))?;
             file.flush().expect("Failed to flush buffer");
@@ -955,8 +1113,8 @@ pub mod tasks_file_manager {
         Ok(())
     }
 
-    pub fn get_saved_tasks() -> Result<Vec<Task>, Box<dyn Error>> {
-        let file_path = get_tasks_file_path()?;
+    pub fn get_saved_tasks(filepath: &str) -> Result<Vec<Task>, Box<dyn Error>> {
+        let file_path = make_file_path_in_working_dir(filepath)?;
 
         let file = OpenOptions::new().read(true).open(file_path)?;
 
