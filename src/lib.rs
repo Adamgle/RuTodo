@@ -9,11 +9,10 @@ use std::error::Error;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::{self, BufRead, BufReader, Write};
+use std::path::Path;
 use std::path::PathBuf;
 use std::time::SystemTime;
 use std::{fmt, vec};
-
-use crate::cli_manager::show_task;
 
 mod utils;
 
@@ -30,7 +29,7 @@ impl Task {
         cli_manager::clear_console();
         println!("Type \"exit\" to break to the CLI user interface");
         println!("{}{}", "Thing: String\n", 
-        "Deadline: format: 10/06/2023 12:30 | 10/06/2023 | tomorrow 12:30 | today 12:30 | tomorrow | 06/06/2023 | 12:30");
+        "Deadline: format: 10/06/2023 12:30 | 10/06/2023 | tomorrow 12:30 | today 12:30 | next 12:30 | tomorrow | next | today | 12:30");
 
         'outer: loop {
             let parsed_deadline;
@@ -41,7 +40,7 @@ impl Task {
                 continue;
             }
 
-            if thing.trim() == "exit" {
+            if thing.trim().to_lowercase() == "exit" {
                 cli_manager::clear_console_and_display_help();
                 break;
             }
@@ -49,7 +48,7 @@ impl Task {
             loop {
                 let deadline = cli_manager::get_labeled_input_from_user("Deadline");
 
-                if deadline.trim() == "exit" {
+                if deadline.trim().to_lowercase() == "exit" {
                     cli_manager::clear_console_and_display_help();
                     break 'outer;
                 }
@@ -145,7 +144,7 @@ impl Task {
                         EditTaskConfig::edit_thing(task)
                     } else if field_to_edit == "status" {
                         EditTaskConfig::edit_status(task)
-                    } else if field_to_edit == "exit" {
+                    } else if field_to_edit.to_lowercase() == "exit" {
                         cli_manager::clear_console_and_display_help();
                         break;
                     } else {
@@ -196,6 +195,7 @@ impl Task {
                 if tasks.iter().any(|x| x.label == task_labeled_by) {
                     tasks.retain(|x| *x.label != task_labeled_by);
                     tasks_history.remove(&task_labeled_by);
+                    println!("{task_labeled_by} successfully deleted")
                 } else {
                     eprintln!("Task with label {task_labeled_by} does not exists");
                 }
@@ -220,13 +220,13 @@ impl Task {
                     TaskStatus::Postponed(date) => {
                         let now = DateTime::date_now();
                         if date < now {
-                            task.status = TaskStatus::Expired(now);
+                            task.status = TaskStatus::Expired(date);
                         }
                     }
                     _ => {
                         let now = DateTime::date_now();
                         if task.deadline.date < now {
-                            task.status = TaskStatus::Expired(now);
+                            task.status = TaskStatus::Expired(task.deadline.date);
                         }
                     }
                 }
@@ -340,35 +340,33 @@ impl Deadline {
         match DateTime::parse_formated_string_to_datetime(input.to_owned(), DateTime::date_now()) {
             Ok(date) => Ok(Self { date }),
             Err(err) => Err(format!("Error occurred while parsing the date. Make sure it's in the right format:\n{}\nMessage: {}", 
-            "Deadline: format: 10/06/2023 12:30 | 10/06/2023 | tomorrow 12:30 | today 12:30 | tomorrow | 06/06/2023 | 12:30", err)),
+            "Deadline: format: 10/06/2023 12:30 | 10/06/2023 | tomorrow 12:30 | today 12:30 | next 12:30 | tomorrow | next | today | 12:30", err)),
         }
     }
 }
 
 // Or the switches in the near future and maybe
-fn handle_action_by_argument(tasks: &mut Vec<Task>, switch: String) -> Result<(), String> {
-    if switch.starts_with("--") {
-        // TEMPORARY SOLUTION
-        // WILL HANDLE IT AS SEPERATE FUNCTION TO FIND WHERE SWITCH STARTS AND ENDS WITH ALL OF IT'S ARGUMENTS
-        let switch_seperated = switch
-            .trim_start_matches("--")
-            .split_whitespace()
-            .next()
-            .unwrap()
-            .to_string();
-        let arg_to_switch = switch.split(" ").last().unwrap();
-        
-        match switch_seperated.as_str() {
-            "1" | "show-tasks" => Ok(cli_manager::show_tasks(tasks, None)?),
-            "parse" => {
-                utils::parse_redirected_stream_of_show_tasks(tasks, PathBuf::from(arg_to_switch))
-                    .map_err(|err| err.to_string())
-            }
+fn handle_action_by_argument(
+    tasks: &mut Vec<Task>,
+    switches_with_args: String,
+) -> Result<(), String> {
+    // some switch is always present
+    let switches = cli_manager::parse_to_switches_and_arguments(&switches_with_args)?.unwrap();
+
+    for (switch, args) in switches {
+        match switch.trim_start_matches("--") {
+            "1" | "show-tasks" => cli_manager::show_tasks(tasks, None),
+            "parse" => match args {
+                Some(args) => {
+                    let path = args.join("");
+                    utils::parse_redirected_stream_of_show_tasks(tasks, PathBuf::from(path))
+                        .map_err(|err| err.to_string())
+                }
+                None => Err(format!("switch {switch} requiers additional arguments")),
+            },
             _ => Err("swtich does not exists".to_string()),
-        }
-    } else {
-        return Err("Switch has a wrong format or does not exists".to_string());
-    }?;
+        }?;
+    }
 
     Ok(())
 }
@@ -452,11 +450,20 @@ pub fn spawn_cli_interface(
                                                 }
                                             }
                                         }
+                                        "help" => println!(
+                                            r"Description: Print task by id
+Usage: show task <Task lable ID> [switch]
+Output: UTF-8 encoded string
+    --history Display previous versions of task
+    
+    --help Display this message
+"
+                                        ),
                                         _ => eprintln!("Inexistent switch"),
                                     };
                                 }
                             }
-                            None => show_task(tasks, task_label_number),
+                            None => cli_manager::show_task(tasks, task_label_number),
                         }
                     }
                     _ => (),
@@ -557,7 +564,7 @@ impl EditTaskConfig {
 TaskStatus {
     Completed,
     Todo,
-    Postponed(Date(relative to the previous date) -> format: 10/06/2023 12:30 | 10/06/2023 | tomorrow 12:30 | today 12:30 | tomorrow | 06/06/2023 | 12:30),
+    Postponed(Date(relative to the previous date) -> format: 10/06/2023 12:30 | 10/06/2023 | tomorrow 12:30 | today 12:30 | next 12:30 | tomorrow | next | today | 12:30),
     Aborted
 }
 help => spawn this message"#
@@ -602,10 +609,6 @@ help => spawn this message"#
                         }
                     }
                 }
-                // "expired" => match task.status {
-                //     Postponed(date) => Expired(date.clone()),
-                //     _ => Expired(task.deadline.date.clone()),
-                // },
                 "aborted" => Aborted(DateTime::date_now()),
                 _ => {
                     eprintln!("No such status available");
@@ -702,19 +705,32 @@ impl DateTimeFormatter for DateTime<Local> {
         let date = date.to_lowercase().to_string();
         let date_parts = date.split(" ").collect::<Vec<&str>>();
 
-        if date == "tomorrow" || date == "today" || date_parts.len() == 2 {
-            let mut hm = date_from.format("%H:%M").to_string();
-
-            if date_parts.len() == 2 {
-                hm = date_parts[1].to_string();
-            }
+        if date == "tomorrow" || date == "today" || date == "next" || date_parts.len() == 2 {
+            let hm: Option<String> = if date_parts.len() == 2 {
+                Some(date_parts[1].to_string())
+            } else {
+                None
+            };
 
             let dmy_part = date_parts[0];
+
+            // tomorrow H:M is set, if not specified to 00:00
+            let hm = match hm {
+                Some(hm) => hm,
+                None => "00:00".to_string(),
+            };
+
             match dmy_part {
-                "tomorrow" => {
+                "next" => {
                     let relative_tomorrow =
                         DateTime::date_dmy(date_from + Duration::days(1)).to_string();
-                    composed_date = format!("{} {hm}", relative_tomorrow);
+
+                    composed_date = format!("{} {}", relative_tomorrow, hm);
+                }
+                "tomorrow" => {
+                    let tomorrow =
+                        DateTime::date_dmy(DateTime::date_now() + Duration::days(1)).to_string();
+                    composed_date = format!("{} {}", tomorrow, hm);
                 }
                 "today" => {
                     composed_date = format!("{} {hm}", DateTime::date_dmy(date_from).to_string())
@@ -722,8 +738,8 @@ impl DateTimeFormatter for DateTime<Local> {
                 _ => (),
             };
         } else if DateTime::is_valid_dmy_format(&date) {
-            let hm = date_from.format("%H:%M").to_string();
-            composed_date = format!("{date} {hm}");
+            // let hm = date_from.format("%H:%M").to_string();
+            composed_date = format!("{date} {}", "00:00");
         } else if DateTime::is_valid_hm_format(&date) {
             let dmy = DateTime::date_dmy(date_from).to_string();
             composed_date = format!("{dmy} {date}");
@@ -741,6 +757,7 @@ impl DateTimeFormatter for DateTime<Local> {
 }
 
 pub mod cli_manager {
+
     use super::*;
 
     pub fn get_labeled_input_from_user(field_name: &str) -> String {
@@ -760,7 +777,6 @@ pub mod cli_manager {
         return input.trim().to_string();
     }
 
-    // parse swit
     pub fn parse_to_switches_and_arguments<'a>(
         action: &'a str,
     ) -> Result<Option<Vec<(String, Option<Vec<&'a str>>)>>, String> {
@@ -835,28 +851,36 @@ pub mod cli_manager {
         }
     }
 
+    fn filter_by_date_later_than(
+        task_date: &DateTime<Local>,
+        input_date: &DateTime<Local>,
+    ) -> bool {
+        task_date > input_date
+    }
+
+    fn filter_by_date_earlier_than(
+        task_date: &DateTime<Local>,
+        input_date: &DateTime<Local>,
+    ) -> bool {
+        task_date < input_date
+    }
+
+    // task_date is created as default with 00:00, if user will specify HH:MM then it will filter equaly to given date, else filter by d/m/y part
+    fn filter_by_date_equally(task_date: &DateTime<Local>, input_date: &DateTime<Local>) -> bool {
+        // println!("{task_date} -- {input_date}");
+        task_date == input_date
+    }
+
+    fn filter_by_date_dmy(task_date: &DateTime<Local>, input_date: &DateTime<Local>) -> bool {
+        task_date.day() == input_date.day()
+            && task_date.month() == input_date.month()
+            && task_date.year() == input_date.year()
+    }
+
     pub fn show_tasks(
         tasks: &Vec<Task>,
         switches: Option<Vec<(String, Option<Vec<&str>>)>>,
     ) -> Result<(), String> {
-        // That's the docs, yea you heard me right
-        // show tasks | 1 => show tasks
-        // show task 1 | 1 1 => show task with specific id (label id)
-        // show tasks --thing "adasda sdas d asdasd" => show tasks that includes this string in thing field
-        // show tasks --status Postponed => show tasks with status as postpoend
-        // show tasks --deadline => sort tasks by deadline date
-        // show tasks --deadline tomorrow => show tasks with deadline that is tomorrow, ignoring hours:minutes
-        // show tasks --deadline tomorrow 12:30 => show tasks with deadline as tomorrow 12:30
-        // show tasks --status postponed => match every task with status as postponed
-        // show tasks --status postponed --date => match every task with status as postponed and sort it by date
-        // show tasks --alphabetical | --alph
-        // show tasks --date > 10/06/2023
-
-        if tasks.len() == 0 {
-            println!("No available tasks");
-            return Ok(());
-        }
-
         match switches {
             Some(switches) => {
                 let switch_args_pair = switches[0].to_owned();
@@ -873,7 +897,7 @@ pub mod cli_manager {
                     _ => (),
                 };
 
-                // We have to clone tasks to operate on own version of vec to make the function reqursive and type valid
+                // We have to clone tasks to operate on own version of vec to make the function reqursive while type valid
                 let mut tasks_clone = tasks.clone();
 
                 let filtered_by_switch = match switch {
@@ -917,33 +941,142 @@ pub mod cli_manager {
                     }
                     "date" => match args {
                         Some(args) => {
-                            let parsable_date_format = args.join(" ").to_string();
-                            let input_date = DateTime::parse_formated_string_to_datetime(
-                                parsable_date_format,
-                                DateTime::date_now(),
-                            )?;
-
-                            let filtered_by_switch = tasks_clone
-                                .into_iter()
-                                .filter(|task| match task.status {
-                                    TaskStatus::Postponed(date)
-                                    | TaskStatus::Expired(date)
-                                    | TaskStatus::Aborted(date) => {
-                                        date.day() == input_date.day()
-                                            && date.month() == input_date.month()
-                                            && date.year() == input_date.year()
+                            // handle sorting
+                            if args.join("") == "-asc" || args.join("") == "-desc" {
+                                let sorting_method = args.join("");
+                                match sorting_method.as_str() {
+                                    "-asc" => {
+                                        tasks_clone.sort_by(|task_a, task_b| {
+                                            let date_a = match task_a.status {
+                                                TaskStatus::Postponed(date)
+                                                | TaskStatus::Expired(date)
+                                                | TaskStatus::Aborted(date) => date,
+                                                _ => task_b.deadline.date,
+                                            };
+                                            let date_b = match task_b.status {
+                                                TaskStatus::Postponed(date)
+                                                | TaskStatus::Expired(date)
+                                                | TaskStatus::Aborted(date) => date,
+                                                _ => task_b.deadline.date,
+                                            };
+                                            date_a.cmp(&date_b)
+                                        });
                                     }
-                                    _ => {
-                                        task.deadline.date.day() == input_date.day()
-                                            && task.deadline.date.month() == input_date.month()
-                                            && task.deadline.date.year() == input_date.year()
+                                    "-desc" => {
+                                        tasks_clone.sort_by(|task_a, task_b| {
+                                            let date_a = match task_a.status {
+                                                TaskStatus::Postponed(date)
+                                                | TaskStatus::Expired(date)
+                                                | TaskStatus::Aborted(date) => date,
+                                                _ => task_a.deadline.date,
+                                            };
+                                            let date_b = match task_b.status {
+                                                TaskStatus::Postponed(date)
+                                                | TaskStatus::Expired(date)
+                                                | TaskStatus::Aborted(date) => date,
+                                                _ => task_b.deadline.date,
+                                            };
+                                            date_b.cmp(&date_a)
+                                        });
                                     }
-                                })
-                                .collect::<Vec<_>>();
+                                    _ => return Err("Sorting method does not exists".to_string()),
+                                }
 
-                            filtered_by_switch
+                                tasks_clone
+                            }
+                            // handle filtering
+                            else {
+                                let method = &args[0..1].join("");
+
+                                let filtering_method: Option<&str> = match method.as_str() {
+                                    "-gt" | "-lt" => Some(method),
+                                    _ => None,
+                                };
+
+                                let parsable_date_format = if filtering_method.is_some() {
+                                    args[1..].join(" ").to_string()
+                                } else {
+                                    args.join(" ").to_string()
+                                };
+
+                                let input_date = DateTime::parse_formated_string_to_datetime(
+                                    parsable_date_format.clone(),
+                                    DateTime::date_now(),
+                                )?;
+
+                                // for performance
+                                let filtered_by_switch = match filtering_method {
+                                    Some(method) => match method {
+                                        "-gt" => tasks_clone
+                                            .into_iter()
+                                            .filter(|task| match task.status {
+                                                TaskStatus::Postponed(date)
+                                                | TaskStatus::Expired(date)
+                                                | TaskStatus::Aborted(date) => {
+                                                    filter_by_date_later_than(&date, &input_date)
+                                                }
+                                                _ => filter_by_date_later_than(
+                                                    &task.deadline.date,
+                                                    &input_date,
+                                                ),
+                                            })
+                                            .collect::<Vec<_>>(),
+                                        "-lt" => tasks_clone
+                                            .into_iter()
+                                            .filter(|task| match task.status {
+                                                TaskStatus::Postponed(date)
+                                                | TaskStatus::Expired(date)
+                                                | TaskStatus::Aborted(date) => {
+                                                    filter_by_date_earlier_than(&date, &input_date)
+                                                }
+                                                _ => filter_by_date_earlier_than(
+                                                    &task.deadline.date,
+                                                    &input_date,
+                                                ),
+                                            })
+                                            .collect::<Vec<_>>(),
+                                        _ => return Err("Inexistent filtering method".to_string()),
+                                    },
+                                    None => tasks_clone
+                                        .into_iter()
+                                        .filter(|task| {
+                                            let date_parts = parsable_date_format
+                                                .split_whitespace()
+                                                .collect::<Vec<_>>();
+
+                                            match task.status {
+                                                TaskStatus::Postponed(date)
+                                                | TaskStatus::Expired(date)
+                                                | TaskStatus::Aborted(date) => {
+                                                    if date_parts.len() == 2 {
+                                                        filter_by_date_equally(&date, &input_date)
+                                                    } else {
+                                                        filter_by_date_dmy(&date, &input_date)
+                                                    }
+                                                }
+                                                _ => {
+                                                    if date_parts.len() == 2 {
+                                                        filter_by_date_equally(
+                                                            &task.deadline.date,
+                                                            &input_date,
+                                                        )
+                                                    } else {
+                                                        filter_by_date_dmy(
+                                                            &task.deadline.date,
+                                                            &input_date,
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        })
+                                        .collect::<Vec<_>>(),
+                                };
+
+                                filtered_by_switch
+                            }
                         }
                         None => {
+                            // sort by date by default
                             tasks_clone.sort_by_key(|task| match task.status {
                                 TaskStatus::Postponed(date)
                                 | TaskStatus::Expired(date)
@@ -953,7 +1086,120 @@ pub mod cli_manager {
                             tasks_clone
                         }
                     },
-                    _ => return Err("inexsistent switch".to_string()),
+                    "alphabetical" | "alph" => {
+                        tasks_clone
+                            .sort_by(|a, b| a.thing.to_lowercase().cmp(&b.thing.to_lowercase()));
+                        tasks_clone
+                    }
+                    "redirect" => {
+                        let mut file = match args {
+                            Some(args) => {
+                                let user_provided_path = args.into_iter().collect::<String>();
+                                let path = Path::new(&user_provided_path);
+
+                                // relative_to_absolute
+                                let path = match fs::canonicalize(path) {
+                                    Ok(path) => {
+                                        if !path.is_file() {
+                                            return Err(format!("Path is not a file"));
+                                        } else {
+                                            path.to_path_buf()
+                                        }
+                                    }
+                                    Err(err) => {
+                                        match (
+                                            path.file_name(),
+                                            path.extension().and_then(|ext| ext.to_str()),
+                                        ) {
+                                            (Some(_), Some("txt")) => match path.parent() {
+                                                Some(parent_dir) => match parent_dir.to_str() {
+                                                    Some("") => {
+                                                        let current_dir =
+                                                            std::env::current_dir()
+                                                                .map_err(|err| err.to_string())?;
+
+                                                        current_dir.join(path)
+                                                    }
+                                                    _ => {
+                                                        return Err(format!("Directory where the file would be created or read does not exist"));
+                                                    }
+                                                },
+                                                None => return Err(format!("Path does not exist")),
+                                            },
+                                            (Some(_), Some(ext)) if ext != "txt" => {
+                                                return Err(format!(
+                                                    "File name have unsupported extension"
+                                                ))
+                                            }
+                                            (Some(_), None) => {
+                                                return Err(format!("File does not have extension"))
+                                            }
+                                            _ => {
+                                                return Err(format!(
+                                                    "Filename was not supplied in path: {err}"
+                                                ))
+                                            }
+                                        }
+                                    }
+                                };
+                                OpenOptions::new()
+                                    .write(true)
+                                    .create(true)
+                                    .truncate(true)
+                                    .open(&path)
+                                    .map_err(|err| err.to_string())?
+                            }
+                            None => {
+                                let current_dir =
+                                    std::env::current_dir().map_err(|err| err.to_string())?;
+
+                                OpenOptions::new()
+                                    .write(true)
+                                    .create(true)
+                                    .truncate(true)
+                                    .open(current_dir.join("stream.txt"))
+                                    .map_err(|err| err.to_string())?
+                            }
+                        };
+                        for task in tasks {
+                            file.write_fmt(format_args!("{task}\n"))
+                                .map_err(|err| err.to_string())?;
+                            file.flush().expect("Failed to flush buffer");
+                        }
+
+                        tasks_clone
+                    }
+                    "help" => {
+                        let help_message = r"Description: Display every task, optionally filter or sort the output. Switches can be chained, after usage of switch, stream is redirected and next switch operate on previous output
+Usage: show tasks | 1 [switch] [arguments]
+Output: UTF-8 encoded string
+
+    --thing <String> => show tasks that starts with this string in thing field
+
+    --status <TaskStatus> => show tasks with given status
+        --status postponed => match every task with status as postponed
+
+    --deadline [Formatted date string -> format: 10/06/2023 12:30 | 10/06/2023 | tomorrow 12:30 | today 12:30 | next 12:30 | tomorrow | next | today | 12:30] => sort tasks by deadline date
+        --deadline => sorts tasks by deadline from earliest date
+        --deadline tomorrow => show tasks with deadline that is tomorrow, ignoring hours:minutes
+        --deadline tomorrow 12:30 => show tasks with deadline as tomorrow 12:30
+            
+    --alphabetical | --alph => sort tasks in alphabetical order by thing field
+    
+    --date [Filtering method] [Formatted date string -> format: 10/06/2023 12:30 | 10/06/2023 | tomorrow 12:30 | today 12:30 | next 12:30 | tomorrow | next | today | 12:30] => filter tasks by date, filters by postponed date, if present, or deadline
+        --date tomorrow => filters tasks equal provided d/m/y date part     
+        --date tomorrow 12:30 => filters tasks equal to provided date 
+        --date -gt 10/06/2023 12:30 => filters tasks by date later than given date
+        --date -lt 10/06/2023 12:30 => filters tasks by date earlier than given date
+        --date -asc => sorts tasks by ascending date
+        --date -desc => sorts tasks by descending date
+
+    --redirect [filename] => redirect stream to given file, if file does not exists it's created, takes relative path of current execution path or absolute path. If file is not supplied, creates file named stream.txt in working directory
+";
+                        println!("{help_message}");
+                        return Ok(());
+                    }
+                    _ => return Err("Inexsistent filtering method".to_string()),
                 };
 
                 // We are slicing switch that just executed
@@ -967,10 +1213,13 @@ pub mod cli_manager {
                 };
             }
             None => {
-                for task in tasks {
-                    println!("{task}");
+                if tasks.is_empty() {
+                    println!("No available tasks");
+                } else {
+                    for task in tasks {
+                        println!("{task}");
+                    }
                 }
-                return Ok(());
             }
         };
         Ok(())
@@ -1113,6 +1362,7 @@ pub mod tasks_file_manager {
         Ok(())
     }
 
+    // I dont expect from anyone to understand this function code
     pub fn get_saved_tasks(filepath: &str) -> Result<Vec<Task>, Box<dyn Error>> {
         let file_path = make_file_path_in_working_dir(filepath)?;
 
@@ -1229,6 +1479,7 @@ pub mod tasks_file_manager {
         }
     }
 
+    /// date could be rfc3339 format or string format
     fn parse_date_inside_task_status(date: &str) -> DateTime<Local> {
         match DateTime::parse_from_rfc3339(date) {
             Ok(date) => date.with_timezone(&Local),

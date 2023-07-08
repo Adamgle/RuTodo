@@ -1,4 +1,4 @@
-// #![allow(unused, unu`sed_variables)]
+#![allow(unused, unused_variables)]
 
 pub mod utils;
 

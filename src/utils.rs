@@ -1,10 +1,7 @@
 use crate::tasks_file_manager::{parse_task_from_file, save_tasks};
-use std::io::Write;
 use std::{collections::HashMap, error::Error, fs::OpenOptions, io::Read};
 
-use crate::DateTimeFormatter;
 use crate::Task;
-use chrono::DateTime;
 use std::path::PathBuf;
 
 // Accepts absolute file path
@@ -12,13 +9,11 @@ pub fn parse_redirected_stream_of_show_tasks(
     tasks: &mut Vec<Task>,
     file_path: PathBuf,
 ) -> Result<(), Box<dyn Error>> {
-    let mut file = OpenOptions::new().read(true).open(file_path)?;
-    let mut log_file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .append(true)
-        .create(true)
-        .open(r"C:\Dev\Rust\rutodo\logs.txt")?;
+    println!("{:?}", file_path.canonicalize());
+    let mut file = match file_path.canonicalize() {
+        Ok(path) => OpenOptions::new().read(true).open(path)?,
+        Err(_) => OpenOptions::new().read(true).open(file_path)?,
+    };
 
     let mut file_content: String = String::new();
 
@@ -34,10 +29,6 @@ pub fn parse_redirected_stream_of_show_tasks(
         Some(max) => max,
         None => 0,
     };
-
-    log_file
-        .write_fmt(format_args!("Begin log: {}\n\n", DateTime::date_now()))
-        .expect("Could not write to file log");
 
     let mut key_value_fields_vec: Vec<Vec<String>> = vec![];
 
@@ -92,11 +83,9 @@ pub fn parse_redirected_stream_of_show_tasks(
             }
         });
 
-        let task = parse_task_from_file(&mut instance_key_values);
+        println!("{instance_entries:?}");
 
-        log_file
-            .write_fmt(format_args!("{}\n", task))
-            .expect("Could not write to file log");
+        let task = parse_task_from_file(&mut instance_key_values);
 
         tasks.push(task);
     }
