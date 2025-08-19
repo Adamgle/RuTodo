@@ -11,7 +11,6 @@ use std::fs::OpenOptions;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::Path;
 use std::path::PathBuf;
-use std::time::SystemTime;
 use std::{fmt, vec};
 
 mod utils;
@@ -337,7 +336,7 @@ impl fmt::Display for TaskStatus {
 
 impl Deadline {
     fn new(input: &String) -> Result<Self, String> {
-        match DateTime::parse_formated_string_to_datetime(input.to_owned(), DateTime::date_now()) {
+        match DateTime::parse_formated_string_to_datetime(input, DateTime::date_now()) {
             Ok(date) => Ok(Self { date }),
             Err(err) => Err(format!("Error occurred while parsing the date. Make sure it's in the right format:\n{}\nMessage: {}", 
             "Deadline: format: 10/06/2023 12:30 | 10/06/2023 | tomorrow 12:30 | today 12:30 | next 12:30 | tomorrow | next | today | 12:30", err)),
@@ -353,9 +352,19 @@ fn handle_action_by_argument(
     // some switch is always present
     let switches = cli_manager::parse_to_switches_and_arguments(&switches_with_args)?.unwrap();
 
-    for (switch, args) in switches {
+    let switches_without_running_command = if switches[1..].is_empty() {
+        None
+    } else {
+        Some(switches[1..].to_vec())
+    };
+
+    println!("{switches:?}");
+
+    for (switch, args) in switches.iter() {
         match switch.trim_start_matches("--") {
-            "1" | "show-tasks" => cli_manager::show_tasks(tasks, None),
+            "1" | "show-tasks" => {
+                return cli_manager::show_tasks(tasks, switches_without_running_command)
+            }
             "parse" => match args {
                 Some(args) => {
                     let path = args.join("");
@@ -364,7 +373,7 @@ fn handle_action_by_argument(
                 }
                 None => Err(format!("switch {switch} requiers additional arguments")),
             },
-            _ => Err("swtich does not exists".to_string()),
+            _ => Err("switch does not exists".to_string()),
         }?;
     }
 
@@ -392,7 +401,7 @@ pub fn spawn_cli_interface(
 
         io::stdin()
             .read_line(&mut action)
-            .expect("Unable to write to the writtable buffer");
+            .expect("Unable to write to the writable buffer");
 
         let switches = match cli_manager::parse_to_switches_and_arguments(action.trim()) {
             Ok(switches) => switches,
@@ -437,7 +446,7 @@ pub fn spawn_cli_interface(
                                     match switch {
                                         "history" => {
                                             let label = format!("Task {}", task_label_number);
-
+                                            
                                             match tasks_history.get(&label) {
                                                 Some(tasks_history) => {
                                                     println!("Tasks history");
@@ -599,8 +608,10 @@ help => spawn this message"#
                         _ => task.deadline.date,
                     };
 
-                    let new_date =
-                        DateTime::parse_formated_string_to_datetime(date_part.join(" "), date_from);
+                    let new_date = DateTime::parse_formated_string_to_datetime(
+                        &date_part.join(" "),
+                        date_from,
+                    );
 
                     match new_date {
                         Ok(date) => Postponed(date),
@@ -635,7 +646,7 @@ pub trait DateTimeFormatter {
     fn date_dmy<'a>(date: DateTime<Local>) -> DelayedFormat<StrftimeItems<'a>>;
     fn date_user_formating(date: DateTime<Local>) -> String;
     fn parse_formated_string_to_datetime(
-        date: String,
+        date: &String,
         date_from: DateTime<Local>,
     ) -> Result<DateTime<Local>, String>;
 }
@@ -649,6 +660,7 @@ impl DateTimeFormatter for DateTime<Local> {
             Err(_) => false,
         }
     }
+
     fn is_valid_dmy_format(date_string: &str) -> bool {
         if let Ok(dt) = NaiveDate::parse_from_str(date_string, "%d/%m/%Y") {
             // Check if the parsed date matches the original input
@@ -681,11 +693,11 @@ impl DateTimeFormatter for DateTime<Local> {
         Ok(datetime_local)
     }
 
-    // returns d/m/y format
     fn date_now() -> DateTime<Local> {
-        let curr_time = SystemTime::now();
-        let dt: DateTime<Local> = curr_time.clone().into();
-        dt
+        // let curr_time = SystemTime::now();
+        // let dt: DateTime<Local> = curr_time.clone().into();
+        // dt
+        chrono::offset::Local::now()
     }
 
     fn date_dmy<'a>(date: DateTime<Local>) -> DelayedFormat<StrftimeItems<'a>> {
@@ -697,7 +709,7 @@ impl DateTimeFormatter for DateTime<Local> {
     }
 
     fn parse_formated_string_to_datetime(
-        date: String,
+        date: &String,
         date_from: DateTime<Local>,
     ) -> Result<DateTime<Local>, String> {
         let mut composed_date: String = String::new();
@@ -724,7 +736,6 @@ impl DateTimeFormatter for DateTime<Local> {
                 "next" => {
                     let relative_tomorrow =
                         DateTime::date_dmy(date_from + Duration::days(1)).to_string();
-
                     composed_date = format!("{} {}", relative_tomorrow, hm);
                 }
                 "tomorrow" => {
@@ -738,7 +749,6 @@ impl DateTimeFormatter for DateTime<Local> {
                 _ => (),
             };
         } else if DateTime::is_valid_dmy_format(&date) {
-            // let hm = date_from.format("%H:%M").to_string();
             composed_date = format!("{date} {}", "00:00");
         } else if DateTime::is_valid_hm_format(&date) {
             let dmy = DateTime::date_dmy(date_from).to_string();
@@ -757,7 +767,6 @@ impl DateTimeFormatter for DateTime<Local> {
 }
 
 pub mod cli_manager {
-
     use super::*;
 
     pub fn get_labeled_input_from_user(field_name: &str) -> String {
@@ -865,9 +874,7 @@ pub mod cli_manager {
         task_date < input_date
     }
 
-    // task_date is created as default with 00:00, if user will specify HH:MM then it will filter equaly to given date, else filter by d/m/y part
     fn filter_by_date_equally(task_date: &DateTime<Local>, input_date: &DateTime<Local>) -> bool {
-        // println!("{task_date} -- {input_date}");
         task_date == input_date
     }
 
@@ -931,19 +938,88 @@ pub mod cli_manager {
                     }
                     "deadline" => {
                         match args {
-                            Some(_) => {
-                                return Err("This switch does not take any additional arguments"
-                                    .to_string())
+                            Some(args) => {
+                                let method = &args[0..1].join("");
+
+                                let filtering_method: Option<&str> = match method.as_str() {
+                                    "-gt" | "-lt" => Some(method),
+                                    _ => None,
+                                };
+
+                                let parsable_date_format = if filtering_method.is_some() {
+                                    args[1..].join(" ").to_string()
+                                } else {
+                                    args.join(" ").to_string()
+                                };
+
+                                let input_date = DateTime::parse_formated_string_to_datetime(
+                                    &parsable_date_format,
+                                    DateTime::date_now(),
+                                )?;
+
+                                // for performance
+                                let filtered_by_switch = match filtering_method {
+                                    Some(method) => match method {
+                                        "-gt" => tasks_clone
+                                            .into_iter()
+                                            .filter(|task| {
+                                                filter_by_date_later_than(
+                                                    &task.deadline.date,
+                                                    &input_date,
+                                                )
+                                            })
+                                            .collect::<Vec<_>>(),
+                                        "-lt" => tasks_clone
+                                            .into_iter()
+                                            .filter(|task| {
+                                                filter_by_date_earlier_than(
+                                                    &task.deadline.date,
+                                                    &input_date,
+                                                )
+                                            })
+                                            .collect::<Vec<_>>(),
+                                        _ => return Err("Inexistent filtering method".to_string()),
+                                    },
+                                    None => tasks_clone
+                                        .into_iter()
+                                        .filter(|task| {
+                                            let date_parts = parsable_date_format
+                                                .split_whitespace()
+                                                .collect::<Vec<_>>();
+
+                                            if date_parts.len() == 2 {
+                                                filter_by_date_equally(
+                                                    &task.deadline.date,
+                                                    &input_date,
+                                                )
+                                            } else {
+                                                filter_by_date_dmy(&task.deadline.date, &input_date)
+                                            }
+                                        })
+                                        .collect::<Vec<_>>(),
+                                };
+                                filtered_by_switch
                             }
-                            None => tasks_clone.sort_by_key(|task| task.deadline.date),
+
+                            None => {
+                                tasks_clone.sort_by_key(|task| task.deadline.date);
+                                tasks_clone
+                            }
                         }
-                        tasks_clone
+                        // match args {
+                        //     Some(_) => {
+                        //         return Err("This switch does not take any additional arguments"
+                        //             .to_string())
+                        //     }
+                        //     None => tasks_clone.sort_by_key(|task| task.deadline.date),
+                        // }
                     }
                     "date" => match args {
                         Some(args) => {
                             // handle sorting
                             if args.join("") == "-asc" || args.join("") == "-desc" {
                                 let sorting_method = args.join("");
+                                // performance-wise this is better then filtering by one method and the reversing accordingly
                                 match sorting_method.as_str() {
                                     "-asc" => {
                                         tasks_clone.sort_by(|task_a, task_b| {
@@ -1000,7 +1076,7 @@ pub mod cli_manager {
                                 };
 
                                 let input_date = DateTime::parse_formated_string_to_datetime(
-                                    parsable_date_format.clone(),
+                                    &parsable_date_format,
                                     DateTime::date_now(),
                                 )?;
 
@@ -1362,7 +1438,7 @@ pub mod tasks_file_manager {
         Ok(())
     }
 
-    // I dont expect from anyone to understand this function code
+    // I don't expect from anyone to understand this function code
     pub fn get_saved_tasks(filepath: &str) -> Result<Vec<Task>, Box<dyn Error>> {
         let file_path = make_file_path_in_working_dir(filepath)?;
 

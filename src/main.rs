@@ -5,6 +5,8 @@ pub mod utils;
 use rutodo::tasks_file_manager;
 use rutodo::{spawn_cli_interface, Task};
 use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::io::{Read, Write};
 
 pub use rutodo::DateTimeFormatter;
 

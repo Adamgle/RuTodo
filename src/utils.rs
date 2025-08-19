@@ -9,11 +9,18 @@ pub fn parse_redirected_stream_of_show_tasks(
     tasks: &mut Vec<Task>,
     file_path: PathBuf,
 ) -> Result<(), Box<dyn Error>> {
-    println!("{:?}", file_path.canonicalize());
+    println!(
+        "Parsing redirected stream of show tasks from file: {:?}",
+        file_path
+    );
+
     let mut file = match file_path.canonicalize() {
-        Ok(path) => OpenOptions::new().read(true).open(path)?,
-        Err(_) => OpenOptions::new().read(true).open(file_path)?,
-    };
+        Ok(path) => OpenOptions::new().read(true).open(path),
+        Err(_) => OpenOptions::new().create(true).write(true).read(true).open(file_path),
+    }
+    .inspect_err(|e| {
+        eprintln!("Error opening file: {}", e);
+    })?;
 
     let mut file_content: String = String::new();
 
